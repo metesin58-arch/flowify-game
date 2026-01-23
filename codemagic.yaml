@@ -16,6 +16,8 @@ workflows:
     scripts:
       - name: Set up code signing settings on Runner project
         script: |
+          keychain initialize
+          keychain add-certificates || echo "No manual certificates found"
           xcode-project use-profiles
       
       - name: Get Flutter packages
