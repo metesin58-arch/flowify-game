@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "cap:sync": "npx cap sync",
+    "assets:generate": "npx capacitor-assets generate --ios",
     "postinstall": "patch-package"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^6.0.0",
     "@types/howler": "^2.2.7",
     "@types/react": "^19.2.3",

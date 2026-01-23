@@ -23,6 +23,8 @@ workflows:
       
       - name: Capacitor Sync
         script: |
+          npm run assets:generate
+          npx cap add ios || true
           npx cap sync ios
       
       - name: Install CocoaPods
