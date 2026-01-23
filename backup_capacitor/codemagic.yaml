@@ -1,0 +1,55 @@
+workflows:
+  ios-release:
+    name: iOS Release Build
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: Zeal
+    environment:
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: "com.metestudios.flowify"
+        XCODE_SCHEME: "App"
+        TEAM_ID: "ERUH5NNQUB" 
+    scripts:
+      - name: Install dependencies
+        script: npm install
+      
+      - name: Build web assets
+        script: npm run build
+      
+      - name: Capacitor Sync & Assets
+        script: |
+          npm run assets:generate
+          npx cap add ios || true
+          npx cap sync ios
+      
+      - name: Install CocoaPods
+        script: cd ios/App && pod install
+      
+      - name: Build and Sign iOS Application
+        script: |
+          keychain initialize
+          
+          # UI'a dosya yuklediysen onlari sisteme kurar
+          keychain add-certificates || echo "UI sertifikasi bulunamadı, devam ediliyor..."
+          
+          # API (Zeal) üzerinden profilleri indir/yarat ve projeyi hazırla
+          xcode-project use-profiles --create --bundle-id "$BUNDLE_ID"
+          
+          # Temiz ve basit build bash script yerine yerleşik komutu kullanalım
+          xcode-project build-ipa \
+            --workspace ios/App/App.xcworkspace \
+            --scheme "$XCODE_SCHEME" \
+            --bundle-id "$BUNDLE_ID" \
+            --deployment-team "$TEAM_ID" \
+            --export-method app-store
+    
+    artifacts:
+      - build/ios/ipa/*.ipa
+    
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
