@@ -35,20 +35,20 @@ workflows:
         script: |
           keychain initialize
           
-          echo "--- 1. Sertifika ve Profil Hazırlığı ---"
+          echo "--- 1. Apple Portali Teşhis (Debug) ---"
+          # Bu komut API anahtarının hangi takımları gördüğünü gösterir. 
+          # Eğer burada bir şey çıkmazsa API anahtarının yetkisi yoktur.
+          app-store-connect list-teams || echo "Teşhis komutu başarısız!"
           
-          # 1. Öncelik: Codemagic UI (Code Signing) kısmına yüklediğin dosyaları sisteme ekle.
-          # Eğer orası boşsa bu komut sessizce geçer.
+          echo "--- 2. Sertifika ve Profil Hazırlığı ---"
+          # UI'daki dosyaları zorla kullanmayı dene
           echo "Codemagic UI dosyaları ekleniyor..."
           keychain add-certificates || echo "UI'da sertifika bulunamadı."
           
-          # 2. Öncelik: Eğer UI'da dosya yoksa Apple Portal'dan (MeteFinal API) çekmeyi dene.
-          # Eğer portal boşsa --create yeni bir tane oluşturur.
-          if [ ! -d "$HOME/Library/MobileDevice/Provisioning Profiles" ] || [ -z "$(ls -A "$HOME/Library/MobileDevice/Provisioning Profiles")" ]; then
-            echo "Profil bulunamadı, Apple Portal'dan çekiliyor..."
-            app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create --delete-stale-profiles || echo "Fetch başarısız!"
-            keychain add-certificates
-          fi
+          # Apple Portal'dan (MeteFinal API) çekmeyi dene.
+          # --create: Eğer portal boşsa yenisini oluşturur.
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create --delete-stale-profiles || echo "Fetch başarısız!"
+          keychain add-certificates
           
           # Teşhis: Keychain'de ne var görelim
           echo "Sistemdeki Sertifikalar:"
@@ -60,9 +60,9 @@ workflows:
           if [ -z "$PROV_PATH" ]; then
             echo "--------------------------------------------------------"
             echo "HATA: Profil bulunamadı!"
-            echo "Lütfen şu 2 noktayı kontrol et:"
-            echo "1. Codemagic UI'da sertifika/profil yanındaki 'Shared' (Paylaş) seçili mi?"
-            echo "2. App Store Connect'te API Key'in 'Certificates, Identifiers & Profiles' izni var mı?"
+            echo "Lütfen şu 2 noktayı KESİN kontrol et:"
+            echo "1. App Store Connect -> API Key sayfasında 'Access to Certificates, Identifiers & Profiles' kutucuğu işaretli mi?"
+            echo "2. Apple Developer Portal'da (Certificates sayfasında) gerçekten HİÇ 'Distribution' sertifikası yok mu? (Tekrar bak!)"
             echo "--------------------------------------------------------"
             exit 1
           fi
