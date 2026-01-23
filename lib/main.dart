@@ -34,7 +34,7 @@ class _WebViewShellState extends State<WebViewShell> {
     super.initState();
 
     // Placeholder URL - USER MUST VERIFY
-    const String gameUrl = 'https://flowifygame.netlify.app';
+    const String gameUrl = 'https://flowifyv01.netlify.app/';
 
     late final PlatformWebViewControllerCreationParams params;
     if (WebViewPlatform.instance is WebKitWebViewPlatform) {
