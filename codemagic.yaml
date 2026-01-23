@@ -31,17 +31,17 @@ workflows:
         script: |
           cd ios/App && pod install
       
-      - name: Fetch Signing Files
+      - name: Setup Signing (UI Managed)
         script: |
           keychain initialize
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          # Codemagic UI üzerinden eklediğin sertifikaları sisteme yükler
           keychain add-certificates
           
-          # Profili dosyadan ara
+          # Profili UI üzerinden eklediysen Codemagic onu otomatik olarak bu klasöre koyar
           PROV_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -n 1)
           
           if [ -z "$PROV_PATH" ]; then
-            echo "HATA: Profil olusturulamadi. Lütfen Apple Developer portalini kontrol edin."
+            echo "HATA: Provisioning Profile bulunamadı! Lütfen Codemagic UI -> Code Signing -> iOS provisioning profiles kısmına profilini eklediğinden emin ol."
             exit 1
           fi
           
