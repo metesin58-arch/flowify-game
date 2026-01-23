@@ -13,7 +13,7 @@ workflows:
         XCODE_SCHEME: "Runner"
         TEAM_ID: "ERUH5NNQUB"
     scripts:
-      - name: Prep and Sanitize Project
+      - name: Sanitize and Fix Project Settings
         script: |
           python3 -c "
           import os, re
@@ -21,86 +21,91 @@ workflows:
           if not os.path.exists(path): exit(0)
           with open(path, 'r') as f: content = f.read()
           
-          # 1. Kimlik Ayarla
+          # 1. Kimlik ve Team Bilgilerini Sabitle
           content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
           content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};', content)
           
-          # 2. Tüm eski profil referanslarını temizle (Çakışma olmaması için)
-          content = re.sub(r'PROVISIONING_PROFILE = [^;]+;', 'PROVISIONING_PROFILE = \"\";', content)
-          content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', 'PROVISIONING_PROFILE_SPECIFIER = \"\";', content)
+          # 2. agvtool hatasını önlemek için Apple Generic versiyonlamayı her yere işle
+          if 'VERSIONING_SYSTEM' not in content:
+              content = content.replace('buildSettings = {', 'buildSettings = {\n\t\t\t\tVERSIONING_SYSTEM = \"apple-generic\";')
           
-          # 3. İmzalamayı Manuel Yap
+          # 3. İmzalamayı Manuel Mod'a Zorla (CI için tek güvenli yol)
           content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
           content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
           
           with open(path, 'w') as f: f.write(content)
-          print('Proje sterilize edildi.')
+          print('Xcode projesi CI için sterilize edildi.')
           "
 
-      - name: Force Create Resources (From Zero)
+      - name: Master Signing Setup (The Zero-to-Hero Fix)
         script: |
           keychain initialize
           
-          # 1. Bundle ID Oluştur
-          app-store-connect create-bundle-id "$BUNDLE_ID" "Flowify Game" || echo "Bundle ID zaten var."
+          # A. ÖNCE SERTİFİKA: Eğer portalda Distribution sertifikası yoksa yaratır. 
+          # Bu adım olmazsa profil asla oluşmaz!
+          app-store-connect create-certificate --type DISTRIBUTION --save || echo "Sertifika zaten mevcut."
           
-          # 2. Sertifika ve Profil Üret/İndir
-          # --create flagi ile her şeyi sıfırdan oluşturmaya zorluyoruz
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          # B. BUNDLE ID: Portalda yoksa oluşturur.
+          app-store-connect create-bundle-id "$BUNDLE_ID" "Flowify Game" || echo "Identifier zaten mevcut."
           
-          # 3. Sertifikaları yükle
+          # C. PROFİL: Sertifika ve ID ile eşleşen yepyeni bir Distribution profili yaratır ve indirir.
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create --save
+          
+          # D. KURULUM: İndirilenleri sisteme tanıt.
           keychain add-certificates
           
-          # 4. Profilleri yükle
-          xcode-project use-profiles
-
-      - name: Dynamic UUID Injection (Smart Search)
+          # E. DEBUG: İndirilenleri listele (Hata olursa yerini görebilmek için)
+          echo "İndirilen Profiller:"
+          ls -R ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "Profil klasörü boş!"
+      
+      - name: Absolute UUID Injection
         script: |
           python3 -c "
           import os, re, glob
           
-          # Profilleri her iki olası klasörde de arayalım
-          search_patterns = [
-              os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision'),
-              os.path.join(os.getcwd(), '*.mobileprovision'),
-              '/Users/builder/Library/MobileDevice/Provisioning Profiles/*.mobileprovision'
-          ]
-          
-          profiles = []
-          for pattern in search_patterns:
-              profiles.extend(glob.glob(pattern))
+          # Profili her yerde ara
+          pp_dir = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/')
+          profiles = glob.glob(pp_dir + '*.mobileprovision')
           
           if not profiles:
-              print('HATA: Profil hala bulunamadı. Apple Developer Portal yetkilerini kontrol edin.')
+              print('HATA: Profil indirilmiş görünüyor ama diskte bulunamadı!')
               exit(1)
           
-          # En son oluşturulan profili al
           latest_profile = max(profiles, key=os.path.getmtime)
-          print(f'Kullanılan Profil: {latest_profile}')
+          print(f'Eşleşen Dosya: {latest_profile}')
           
           with open(latest_profile, 'rb') as f:
-              p_content = f.read().decode('latin-1')
+              p_content = f.read().decode('latin-1', errors='ignore')
+              # UUID bul
               uuid_match = re.search(r'<key>UUID</key>\s*<string>([^<]+)</string>', p_content)
               if uuid_match:
                   uuid = uuid_match.group(1)
-                  print(f'Enjekte Edilen UUID: {uuid}')
+                  print(f'Zorla Enjekte Edilen UUID: {uuid}')
                   
                   pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
                   with open(pbx_path, 'r') as f: content = f.read()
+                  
+                  # Bu iki satır Xcode'un 'Profile seç' demesini sonsuza kadar bitirir
                   content = re.sub(r'PROVISIONING_PROFILE = [^;]*;', f'PROVISIONING_PROFILE = \"{uuid}\";', content)
+                  content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;', f'PROVISIONING_PROFILE_SPECIFIER = \"\";', content)
+                  
                   with open(pbx_path, 'w') as f: f.write(content)
-                  print('Success: UUID injected into project.')
+                  print('Success: Profile anchored to project.')
           "
 
-      - name: Build IPA
+      - name: Build and Sign IPA
         script: |
-          # Build number'ı otomatik al ve projeye yaz
+          # Build numarasını al
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
           NEXT_BUILD=$((LATEST_BUILD + 1))
-          cd ios && agvtool new-version -all $NEXT_BUILD && cd ..
           
-          # Tertemiz build
-          xcode-project build-ipa --workspace ios/Runner.xcworkspace --scheme "$XCODE_SCHEME"
+          # Versiyonu doğrudan Info.plist'e yazalım (agvtool hatasından kaçış)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEXT_BUILD" ios/Runner/Info.plist
+          
+          # Parametresiz, tertemiz native build
+          xcode-project build-ipa \
+            --workspace "ios/Runner.xcworkspace" \
+            --scheme "$XCODE_SCHEME"
     
     artifacts:
       - build/ios/ipa/*.ipa
