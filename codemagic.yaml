@@ -4,7 +4,7 @@ workflows:
     instance_type: mac_mini_m2
     max_build_duration: 60
     integrations:
-      app_store_connect: MeteFinal
+      app_store_connect: Zeal
     environment:
       xcode: latest
       cocoapods: default
@@ -14,70 +14,39 @@ workflows:
         TEAM_ID: "ERUH5NNQUB" 
     scripts:
       - name: Install dependencies
-        script: |
-          npm install
+        script: npm install
       
       - name: Build web assets
-        script: |
-          npm run build
+        script: npm run build
       
-      - name: Capacitor Sync
+      - name: Capacitor Sync & Assets
         script: |
           npm run assets:generate
           npx cap add ios || true
           npx cap sync ios
       
       - name: Install CocoaPods
-        script: |
-          cd ios/App && pod install
+        script: cd ios/App && pod install
       
-      - name: Build iOS Application
+      - name: Setup Signing
         script: |
           keychain initialize
+          xcode-project use-profiles --create --bundle-id "$BUNDLE_ID"
           
-          echo "--- 1. Apple Portali Teşhis (Debug) ---"
-          # Bu komut API anahtarının hangi takımları gördüğünü gösterir. 
-          # Eğer burada bir şey çıkmazsa API anahtarının yetkisi yoktur.
-          app-store-connect list-teams || echo "Teşhis komutu başarısız!"
-          
-          echo "--- 2. Sertifika ve Profil Hazırlığı ---"
-          # UI'daki dosyaları zorla kullanmayı dene
-          echo "Codemagic UI dosyaları ekleniyor..."
-          keychain add-certificates || echo "UI'da sertifika bulunamadı."
-          
-          # Apple Portal'dan (MeteFinal API) çekmeyi dene.
-          # --create: Eğer portal boşsa yenisini oluşturur.
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create --delete-stale-profiles || echo "Fetch başarısız!"
-          keychain add-certificates
-          
-          # Teşhis: Keychain'de ne var görelim
-          echo "Sistemdeki Sertifikalar:"
-          security find-identity -v -p codesigning
-          
-          # Profili dosyadan bul ve degiskenlere ata
           PROV_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -n 1)
-          
-          if [ -z "$PROV_PATH" ]; then
-            echo "--------------------------------------------------------"
-            echo "HATA: Profil bulunamadı!"
-            echo "Lütfen şu 2 noktayı KESİN kontrol et:"
-            echo "1. App Store Connect -> API Key sayfasında 'Access to Certificates, Identifiers & Profiles' kutucuğu işaretli mi?"
-            echo "2. Apple Developer Portal'da (Certificates sayfasında) gerçekten HİÇ 'Distribution' sertifikası yok mu? (Tekrar bak!)"
-            echo "--------------------------------------------------------"
-            exit 1
-          fi
-          
           PROV_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< $(security cms -D -i "$PROV_PATH"))
           PROV_UUID=$(grep -aA1 "UUID" "$PROV_PATH" | grep -o "[0-9a-fA-F-]\{36\}")
           
-          echo "Başarılı Profil: $PROV_NAME ($PROV_UUID)"
-          
-          echo "--- 2. Xcode Projesini Hazırlama ---"
+          echo "PROV_UUID=$PROV_UUID" >> $CM_ENV
+          echo "PROV_NAME=\"$PROV_NAME\"" >> $CM_ENV
+          echo "Profil: $PROV_NAME ($PROV_UUID)"
+
+      - name: Build iOS app
+        script: |
           cd ios/App
           sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" App.xcodeproj/project.pbxproj
           sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" App.xcodeproj/project.pbxproj
           
-          echo "--- 3. Arşivleme ve Paketleme ---"
           xcodebuild -workspace App.xcworkspace \
             -scheme "$XCODE_SCHEME" \
             -configuration Release \
@@ -88,25 +57,15 @@ workflows:
             PROVISIONING_PROFILE_SPECIFIER="$PROV_NAME" \
             archive
           
-          echo "--- 4. IPA Export ---"
           cat <<EOF > export_options.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>teamID</key>
-            <string>$TEAM_ID</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>$BUNDLE_ID</key>
-              <string>$PROV_NAME</string>
-            </dict>
-            <key>signingStyle</key>
-            <string>manual</string>
-          </dict>
-          </plist>
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>provisioningProfiles</key><dict><key>$BUNDLE_ID</key><string>$PROV_NAME</string></dict>
+            <key>signingStyle</key><string>manual</string>
+          </dict></plist>
           EOF
           
           xcodebuild -exportArchive \
