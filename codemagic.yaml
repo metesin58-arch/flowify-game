@@ -16,7 +16,7 @@ workflows:
     scripts:
       - name: Set up code signing settings on Runner project
         script: |
-          xcode-project use-profiles --create --bundle-id "$BUNDLE_ID"
+          xcode-project use-profiles
       
       - name: Get Flutter packages
         script: flutter pub get
