@@ -23,10 +23,14 @@ workflows:
       
       - name: Build IPA for App Store
         script: |
+          # Build number'ı otomatik artıralım veya App Store'dan çekelim
+          # --bundle-id flag'i bazı versiyonlarda sorun çıkarabiliyor, parametre olarak verelim
+          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
+          BUILD_NUMBER=$((LATEST_BUILD + 1))
+          
           flutter build ipa --release \
             --export-method app-store \
-            --bundle-sideloading \
-            --build-number=$(($(app-store-connect get-latest-testflight-build-number --bundle-id "$BUNDLE_ID") + 1))
+            --build-number=$BUILD_NUMBER
     
     artifacts:
       - build/ios/ipa/*.ipa
