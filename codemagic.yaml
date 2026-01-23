@@ -31,33 +31,34 @@ workflows:
         script: |
           cd ios/App && pod install
       
-      - name: Setup Signing (MeteFinal)
+      - name: Build iOS Application
         script: |
           keychain initialize
-          # MeteFinal API entegrasyonu üzerinden her şeyi otomatik çözüyoruz
-          # Bu komut; sertifika yoksa üretir, profil yoksa yaratır ve projeye bağlar.
+          
+          echo "--- 1. Apple Portali ile Baglantı ve Mühürleme ---"
+          # MeteFinal API üzerinden sertifika ve profili hazırla
           xcode-project use-profiles --create --bundle-id "$BUNDLE_ID"
           
-          # Hangi profilin başarıyla bağlandığını görmek için log alalım
+          # Profili dosyadan bul ve degiskenlere ata
           PROV_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -n 1)
+          
+          if [ -z "$PROV_PATH" ]; then
+            echo "HATA: Profil bulunamadı!"
+            exit 1
+          fi
+          
           PROV_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< $(security cms -D -i "$PROV_PATH"))
           PROV_UUID=$(grep -aA1 "UUID" "$PROV_PATH" | grep -o "[0-9a-fA-F-]\{36\}")
           
-          echo "PROV_UUID=$PROV_UUID" >> $CM_ENV
-          echo "PROV_NAME=\"$PROV_NAME\"" >> $CM_ENV
-          echo "MeteFinal Başarıyla Bağlandı: $PROV_NAME"
-
-      - name: Build iOS app
-        script: |
+          echo "Kullanılan Profil: $PROV_NAME ($PROV_UUID)"
+          
+          echo "--- 2. Xcode Projesini Hazırlama ---"
           cd ios/App
-          # Proje dosyasını imzalamaya hazır hale getirelim
-          # Eski UUID kalıntılarını ve Team ID'yi mühürleyelim
+          # Proje dosyasını manuel imzalamaya zorla
           sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" App.xcodeproj/project.pbxproj
           sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" App.xcodeproj/project.pbxproj
           
-          echo "Build Başlıyor: $PROV_NAME ($PROV_UUID)"
-          
-          # Arşivleme
+          echo "--- 3. Arşivleme (Build) Başlıyor ---"
           xcodebuild -workspace App.xcworkspace \
             -scheme "$XCODE_SCHEME" \
             -configuration Release \
@@ -68,7 +69,7 @@ workflows:
             PROVISIONING_PROFILE_SPECIFIER="$PROV_NAME" \
             archive
           
-          # IPA Export (plist'i burada anında oluşturuyoruz)
+          echo "--- 4. IPA Export islemi ---"
           cat <<EOF > export_options.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
