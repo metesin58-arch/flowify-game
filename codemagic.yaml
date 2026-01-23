@@ -1,6 +1,6 @@
 workflows:
   ios-native:
-    name: iOS Native Premium Build
+    name: iOS Native Safe-Mode Build
     instance_type: mac_mini_m2
     max_build_duration: 30
     integrations:
@@ -11,94 +11,27 @@ workflows:
       vars:
         BUNDLE_ID: "com.metestudios.flowifyzero" 
         XCODE_SCHEME: "Runner"
-        TEAM_ID: "ERUH5NNQUB"
     scripts:
-      - name: Sanitize Xcode Project Settings
-        script: |
-          python3 -c "
-          import os, re
-          path = 'ios/Runner.xcodeproj/project.pbxproj'
-          if not os.path.exists(path): exit(0)
-          with open(path, 'r') as f: content = f.read()
-          
-          # 1. Kimlik Ayarlarını Sabitle
-          id = os.environ['BUNDLE_ID']
-          team = os.environ['TEAM_ID']
-          content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {id};', content)
-          content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {team};', content)
-          
-          # 2. İmzalamayı Manuel Yap (CI için tek yol)
-          content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
-          content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
-          
-          # 3. Eski profil kırıntılarını temizle
-          content = re.sub(r'PROVISIONING_PROFILE = [^;]+;', 'PROVISIONING_PROFILE = \"\";', content)
-          content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', 'PROVISIONING_PROFILE_SPECIFIER = \"\";', content)
-          
-          with open(path, 'w') as f: f.write(content)
-          print('Xcode projesi sterilize edildi.')
-          "
-
-      - name: Master Signing Setup (Zero Start)
+      - name: Set up code signing
         script: |
           keychain initialize
-          
-          # Portalda her şeyi sıfırdan oluşturmaya zorla
-          app-store-connect create-bundle-id "$BUNDLE_ID" "Flowify Game" || echo "ID Mevcut."
-          app-store-connect create-certificate --type DISTRIBUTION --save || echo "Sertifika Mevcut."
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create --save
-          
-          keychain add-certificates
-          
-          # Profillerin nereye indiğini görmek için debug
-          find /Users/builder -name "*.mobileprovision"
-
-      - name: Force Injection of Downloaded Profile (The Sniper)
+          # Official Codemagic method: fetch profiles based on bundle id
+          xcode-project use-profiles --bundle-id="$BUNDLE_ID" --export-method=app-store
+      
+      - name: Build and Sign IPA
         script: |
-          python3 -c "
-          import os, re, subprocess
-          
-          # İndirilen profili diskin her yerinde arayalım
-          try:
-              output = subprocess.check_output(['find', '/Users/builder', '-name', '*.mobileprovision']).decode().splitlines()
-          except:
-              output = []
-          
-          if not output:
-              print('HATA: Profil Apple Portalından indirilemedi!')
-              exit(1)
-          
-          # En yeni profili al
-          latest_profile = max(output, key=os.path.getmtime)
-          print(f'Profil Bulundu: {latest_profile}')
-          
-          with open(latest_profile, 'rb') as f:
-              p_content = f.read().decode('latin-1', errors='ignore')
-              uuid_match = re.search(r'<key>UUID</key>\s*<string>([^<]+)</string>', p_content)
-              if uuid_match:
-                  uuid = uuid_match.group(1)
-                  print(f'Enjekte Edilen UUID: {uuid}')
-                  
-                  pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
-                  with open(pbx_path, 'r') as f: content = f.read()
-                  
-                  # Projeyi bu UUID ile kelepçele (Manual Signing Fix)
-                  content = re.sub(r'PROVISIONING_PROFILE = [^;]*;', f'PROVISIONING_PROFILE = \"{uuid}\";', content)
-                  content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;', 'PROVISIONING_PROFILE_SPECIFIER = \"\";', content)
-                  
-                  with open(pbx_path, 'w') as f: f.write(content)
-                  print('Success: Profile anchored to project.')
-          "
-
-      - name: Build IPA
-        script: |
-          # Build numarasını al ve PlistBuddy ile Info.plist'e yaz
+          # Fetch latest build number from App Store Connect
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
-          NEXT_BUILD=$((LATEST_BUILD + 1))
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEXT_BUILD" ios/Runner/Info.plist
+          BUILD_NUMBER=$((LATEST_BUILD + 1))
           
-          # Parametresiz, tertemiz bildiğimiz Xcode build
-          xcode-project build-ipa --workspace ios/Runner.xcworkspace --scheme "$XCODE_SCHEME"
+          # Use PlistBuddy to set version (most reliable native method)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
+          
+          # Official build command: handles signing automatically via profiles fetched above
+          xcode-project build-ipa \
+            --workspace ios/Runner.xcworkspace \
+            --scheme "$XCODE_SCHEME" \
+            --export-method app-store
     
     artifacts:
       - build/ios/ipa/*.ipa
