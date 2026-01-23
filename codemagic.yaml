@@ -17,8 +17,13 @@ workflows:
       - name: Set up code signing settings on Runner project
         script: |
           keychain initialize
-          keychain add-certificates || echo "No manual certificates found"
+          # App Store Connect'ten profilleri çekelim
           xcode-project use-profiles
+          
+          # Xcode projesini Manuel imzalama moduna zorlayalım (CI için en güvenli yol)
+          cd ios
+          sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" Runner.xcodeproj/project.pbxproj
+          sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" Runner.xcodeproj/project.pbxproj
       
       - name: Get Flutter packages
         script: flutter pub get
