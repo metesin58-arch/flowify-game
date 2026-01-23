@@ -1,6 +1,6 @@
 workflows:
   ios-native:
-    name: iOS Native Safe-Mode Build V2
+    name: iOS Native Premium Build (Dynamic Injection)
     instance_type: mac_mini_m2
     max_build_duration: 30
     integrations:
@@ -12,19 +12,37 @@ workflows:
         BUNDLE_ID: "com.metestudios.flowifyzero" 
         XCODE_SCHEME: "Runner"
     scripts:
-      - name: Set up code signing
+      - name: Set up code signing & Inject Profile
         script: |
           keychain initialize
           
-          # Use app-store-connect CLI instead of xcode-project for more reliability
-          # This will fetch the certificate and profile and save them to the builder
+          # 1. Fetch profiles and certificates
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
-          
-          # Add the downloaded certificates to the keychain
           keychain add-certificates
           
-          # Apply profiles to the project
-          xcode-project use-profiles
+          # 2. Extract the Profile Name from the downloaded file
+          PROV_PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
+          PROV_PROFILE_NAME=$(grep -aA1 "Name" "$PROV_PROFILE_PATH" | grep string | sed -E 's/.*<string>(.*)<\/string>.*/\1/' | head -1)
+          echo "Target Profile Name: $PROV_PROFILE_NAME"
+          
+          # 3. Inject this name directly into the project file
+          export PROV_PROFILE_NAME="$PROV_PROFILE_NAME"
+          python3 -c "
+          import os, re
+          path = 'ios/Runner.xcodeproj/project.pbxproj'
+          name = os.environ.get('PROV_PROFILE_NAME')
+          if not os.path.exists(path): 
+              print('Project path not found')
+              exit(1)
+          with open(path, 'r') as f: content = f.read()
+          # Update or add PROVISIONING_PROFILE_SPECIFIER for all build configurations
+          if 'PROVISIONING_PROFILE_SPECIFIER' in content:
+              content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;', f'PROVISIONING_PROFILE_SPECIFIER = \"{name}\";', content)
+          else:
+              content = content.replace('buildSettings = {', f'buildSettings = {{\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"{name}\";')
+          with open(path, 'w') as f: f.write(content)
+          print(f'Successfully injected {name} into {path}')
+          "
       
       - name: Build IPA
         script: |
@@ -35,7 +53,7 @@ workflows:
           # Set version
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
           
-          # Direct build with xcodebuild via xcode-project
+          # Official build command
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
             --scheme "$XCODE_SCHEME"
