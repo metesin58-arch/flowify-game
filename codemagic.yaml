@@ -1,0 +1,106 @@
+workflows:
+  ios-release:
+    name: iOS Release Build
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: MeteFinal
+    environment:
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: "com.metestudios.flowifygame"
+        XCODE_SCHEME: "App"
+        TEAM_ID: "ERUH5NNQUB" 
+    scripts:
+      - name: Install dependencies
+        script: |
+          npm install
+      
+      - name: Build web assets
+        script: |
+          npm run build
+      
+      - name: Capacitor Sync
+        script: |
+          npx cap sync ios
+      
+      - name: Install CocoaPods
+        script: |
+          cd ios/App && pod install
+      
+      - name: Fetch Signing Files
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          keychain add-certificates
+          
+          # Profili dosyadan ara
+          PROV_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -n 1)
+          
+          if [ -z "$PROV_PATH" ]; then
+            echo "HATA: Profil olusturulamadi. Lütfen Apple Developer portalini kontrol edin."
+            exit 1
+          fi
+          
+          PROV_UUID=$(grep -aA1 "UUID" "$PROV_PATH" | grep -o "[0-9a-fA-F-]\{36\}")
+          PROV_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< $(security cms -D -i "$PROV_PATH"))
+          
+          echo "PROV_UUID=$PROV_UUID" >> $CM_ENV
+          echo "PROV_NAME=\"$PROV_NAME\"" >> $CM_ENV
+          echo "Mühür Hazır: $PROV_NAME ($PROV_UUID)"
+
+      - name: Build iOS app
+        script: |
+          cd ios/App
+          # Proje dosyasını imzalamaya hazır hale getirelim
+          # Eski UUID kalıntılarını ve Team ID'yi mühürleyelim
+          sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" App.xcodeproj/project.pbxproj
+          sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" App.xcodeproj/project.pbxproj
+          
+          echo "Build Başlıyor: $PROV_NAME ($PROV_UUID)"
+          
+          # Arşivleme
+          xcodebuild -workspace App.xcworkspace \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -archivePath build/App.xcarchive \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PROVISIONING_PROFILE="$PROV_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROV_NAME" \
+            archive
+          
+          # IPA Export (plist'i burada anında oluşturuyoruz)
+          cat <<EOF > export_options.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
+            <key>teamID</key>
+            <string>$TEAM_ID</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$BUNDLE_ID</key>
+              <string>$PROV_NAME</string>
+            </dict>
+            <key>signingStyle</key>
+            <string>manual</string>
+          </dict>
+          </plist>
+          EOF
+          
+          xcodebuild -exportArchive \
+            -archivePath build/App.xcarchive \
+            -exportOptionsPlist export_options.plist \
+            -exportPath build/ios/ipa
+    
+    artifacts:
+      - ios/App/build/ios/ipa/*.ipa
+    
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
