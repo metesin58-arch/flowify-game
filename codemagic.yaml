@@ -13,7 +13,7 @@ workflows:
         XCODE_SCHEME: "Runner"
         TEAM_ID: "ERUH5NNQUB"
     scripts:
-      - name: Sanitize and Fix Project Settings
+      - name: Sanitize Xcode Project Settings
         script: |
           python3 -c "
           import os, re
@@ -21,91 +21,84 @@ workflows:
           if not os.path.exists(path): exit(0)
           with open(path, 'r') as f: content = f.read()
           
-          # 1. Kimlik ve Team Bilgilerini Sabitle
-          content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
-          content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};', content)
+          # 1. Kimlik Ayarlarını Sabitle
+          id = os.environ['BUNDLE_ID']
+          team = os.environ['TEAM_ID']
+          content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {id};', content)
+          content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {team};', content)
           
-          # 2. agvtool hatasını önlemek için Apple Generic versiyonlamayı her yere işle
-          if 'VERSIONING_SYSTEM' not in content:
-              content = content.replace('buildSettings = {', 'buildSettings = {\n\t\t\t\tVERSIONING_SYSTEM = \"apple-generic\";')
-          
-          # 3. İmzalamayı Manuel Mod'a Zorla (CI için tek güvenli yol)
+          # 2. İmzalamayı Manuel Yap (CI için tek yol)
           content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
           content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
           
+          # 3. Eski profil kırıntılarını temizle
+          content = re.sub(r'PROVISIONING_PROFILE = [^;]+;', 'PROVISIONING_PROFILE = \"\";', content)
+          content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', 'PROVISIONING_PROFILE_SPECIFIER = \"\";', content)
+          
           with open(path, 'w') as f: f.write(content)
-          print('Xcode projesi CI için sterilize edildi.')
+          print('Xcode projesi sterilize edildi.')
           "
 
-      - name: Master Signing Setup (The Zero-to-Hero Fix)
+      - name: Master Signing Setup (Zero Start)
         script: |
           keychain initialize
           
-          # A. ÖNCE SERTİFİKA: Eğer portalda Distribution sertifikası yoksa yaratır. 
-          # Bu adım olmazsa profil asla oluşmaz!
-          app-store-connect create-certificate --type DISTRIBUTION --save || echo "Sertifika zaten mevcut."
-          
-          # B. BUNDLE ID: Portalda yoksa oluşturur.
-          app-store-connect create-bundle-id "$BUNDLE_ID" "Flowify Game" || echo "Identifier zaten mevcut."
-          
-          # C. PROFİL: Sertifika ve ID ile eşleşen yepyeni bir Distribution profili yaratır ve indirir.
+          # Portalda her şeyi sıfırdan oluşturmaya zorla
+          app-store-connect create-bundle-id "$BUNDLE_ID" "Flowify Game" || echo "ID Mevcut."
+          app-store-connect create-certificate --type DISTRIBUTION --save || echo "Sertifika Mevcut."
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create --save
           
-          # D. KURULUM: İndirilenleri sisteme tanıt.
           keychain add-certificates
           
-          # E. DEBUG: İndirilenleri listele (Hata olursa yerini görebilmek için)
-          echo "İndirilen Profiller:"
-          ls -R ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "Profil klasörü boş!"
-      
-      - name: Absolute UUID Injection
+          # Profillerin nereye indiğini görmek için debug
+          find /Users/builder -name "*.mobileprovision"
+
+      - name: Force Injection of Downloaded Profile (The Sniper)
         script: |
           python3 -c "
-          import os, re, glob
+          import os, re, subprocess
           
-          # Profili her yerde ara
-          pp_dir = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/')
-          profiles = glob.glob(pp_dir + '*.mobileprovision')
+          # İndirilen profili diskin her yerinde arayalım
+          try:
+              output = subprocess.check_output(['find', '/Users/builder', '-name', '*.mobileprovision']).decode().splitlines()
+          except:
+              output = []
           
-          if not profiles:
-              print('HATA: Profil indirilmiş görünüyor ama diskte bulunamadı!')
+          if not output:
+              print('HATA: Profil Apple Portalından indirilemedi!')
               exit(1)
           
-          latest_profile = max(profiles, key=os.path.getmtime)
-          print(f'Eşleşen Dosya: {latest_profile}')
+          # En yeni profili al
+          latest_profile = max(output, key=os.path.getmtime)
+          print(f'Profil Bulundu: {latest_profile}')
           
           with open(latest_profile, 'rb') as f:
               p_content = f.read().decode('latin-1', errors='ignore')
-              # UUID bul
               uuid_match = re.search(r'<key>UUID</key>\s*<string>([^<]+)</string>', p_content)
               if uuid_match:
                   uuid = uuid_match.group(1)
-                  print(f'Zorla Enjekte Edilen UUID: {uuid}')
+                  print(f'Enjekte Edilen UUID: {uuid}')
                   
                   pbx_path = 'ios/Runner.xcodeproj/project.pbxproj'
                   with open(pbx_path, 'r') as f: content = f.read()
                   
-                  # Bu iki satır Xcode'un 'Profile seç' demesini sonsuza kadar bitirir
+                  # Projeyi bu UUID ile kelepçele (Manual Signing Fix)
                   content = re.sub(r'PROVISIONING_PROFILE = [^;]*;', f'PROVISIONING_PROFILE = \"{uuid}\";', content)
-                  content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;', f'PROVISIONING_PROFILE_SPECIFIER = \"\";', content)
+                  content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;', 'PROVISIONING_PROFILE_SPECIFIER = \"\";', content)
                   
                   with open(pbx_path, 'w') as f: f.write(content)
                   print('Success: Profile anchored to project.')
           "
 
-      - name: Build and Sign IPA
+      - name: Build IPA
         script: |
-          # Build numarasını al
+          # Build numarasını al ve PlistBuddy ile Info.plist'e yaz
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
           NEXT_BUILD=$((LATEST_BUILD + 1))
-          
-          # Versiyonu doğrudan Info.plist'e yazalım (agvtool hatasından kaçış)
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEXT_BUILD" ios/Runner/Info.plist
           
-          # Parametresiz, tertemiz native build
-          xcode-project build-ipa \
-            --workspace "ios/Runner.xcworkspace" \
-            --scheme "$XCODE_SCHEME"
+          # Parametresiz, tertemiz bildiğimiz Xcode build
+          xcode-project build-ipa --workspace ios/Runner.xcworkspace --scheme "$XCODE_SCHEME"
     
     artifacts:
       - build/ios/ipa/*.ipa
