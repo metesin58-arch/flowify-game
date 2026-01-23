@@ -31,26 +31,20 @@ workflows:
         script: |
           cd ios/App && pod install
       
-      - name: Setup Signing (UI Managed)
+      - name: Setup Signing (Fully Automatic)
         script: |
           keychain initialize
-          # Codemagic UI üzerinden eklediğin sertifikaları sisteme yükler
-          keychain add-certificates
+          # API Key (MeteFinal) kullanarak sertifika ve profil yönetimini tamamen otomatikleştiriyoruz
+          xcode-project use-profiles --create
           
-          # Profili UI üzerinden eklediysen Codemagic onu otomatik olarak bu klasöre koyar
+          # Build için hangi profilin seçildiğini loglara basalım (Kontrol amaçlı)
           PROV_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -n 1)
-          
-          if [ -z "$PROV_PATH" ]; then
-            echo "HATA: Provisioning Profile bulunamadı! Lütfen Codemagic UI -> Code Signing -> iOS provisioning profiles kısmına profilini eklediğinden emin ol."
-            exit 1
-          fi
-          
           PROV_UUID=$(grep -aA1 "UUID" "$PROV_PATH" | grep -o "[0-9a-fA-F-]\{36\}")
           PROV_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< $(security cms -D -i "$PROV_PATH"))
           
           echo "PROV_UUID=$PROV_UUID" >> $CM_ENV
           echo "PROV_NAME=\"$PROV_NAME\"" >> $CM_ENV
-          echo "Mühür Hazır: $PROV_NAME ($PROV_UUID)"
+          echo "HAYIRLI OLSUN: $PROV_NAME hazır!"
 
       - name: Build iOS app
         script: |
