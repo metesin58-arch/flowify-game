@@ -35,19 +35,35 @@ workflows:
         script: |
           keychain initialize
           
-          echo "--- 1. Apple Portali ile Baglantı ve Mühürleme ---"
-          # En temiz ve standart komutla her şeyi Apple'dan çekiyoruz. 
-          # --create: Sertifika/profil yoksa oluşturur.
-          # --delete-stale-profiles: Eski bozuk profilleri temizler.
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create --delete-stale-profiles
+          echo "--- 1. Sertifika ve Profil Hazırlığı ---"
           
-          keychain add-certificates
+          # 1. Öncelik: Codemagic UI (Code Signing) kısmına yüklediğin dosyaları sisteme ekle.
+          # Eğer orası boşsa bu komut sessizce geçer.
+          echo "Codemagic UI dosyaları ekleniyor..."
+          keychain add-certificates || echo "UI'da sertifika bulunamadı."
           
-          # Hangi profilin başarıyla indiğini kontrol edelim
+          # 2. Öncelik: Eğer UI'da dosya yoksa Apple Portal'dan (MeteFinal API) çekmeyi dene.
+          # Eğer portal boşsa --create yeni bir tane oluşturur.
+          if [ ! -d "$HOME/Library/MobileDevice/Provisioning Profiles" ] || [ -z "$(ls -A "$HOME/Library/MobileDevice/Provisioning Profiles")" ]; then
+            echo "Profil bulunamadı, Apple Portal'dan çekiliyor..."
+            app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create --delete-stale-profiles || echo "Fetch başarısız!"
+            keychain add-certificates
+          fi
+          
+          # Teşhis: Keychain'de ne var görelim
+          echo "Sistemdeki Sertifikalar:"
+          security find-identity -v -p codesigning
+          
+          # Profili dosyadan bul ve degiskenlere ata
           PROV_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -n 1)
           
           if [ -z "$PROV_PATH" ]; then
-            echo "HATA: Profil hala gelmedi. Apple Developer Sitesi (Certificates) kısmını tamamen boşaltmalısın!"
+            echo "--------------------------------------------------------"
+            echo "HATA: Profil bulunamadı!"
+            echo "Lütfen şu 2 noktayı kontrol et:"
+            echo "1. Codemagic UI'da sertifika/profil yanındaki 'Shared' (Paylaş) seçili mi?"
+            echo "2. App Store Connect'te API Key'in 'Certificates, Identifiers & Profiles' izni var mı?"
+            echo "--------------------------------------------------------"
             exit 1
           fi
           
