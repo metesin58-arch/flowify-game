@@ -24,44 +24,47 @@ workflows:
           if not os.path.exists(path): exit(0)
           with open(path, 'r') as f: content = f.read()
           
-          # Bundle ID ve Team ID'yi enjekte et
+          # Bundle ID ve Team ID'yi zorla enjekte et
           content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
           content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};', content)
           
-          # İmzalama modunu manuel yap (CI için en güvenlisi)
+          # Manuel imzalama moduna zorla (CI için şart)
           content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
           content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
           
           with open(path, 'w') as f: f.write(content)
-          print('Xcode projesi temizlendi.')
+          print('Xcode projesi sterilize edildi.')
           "
 
       - name: Force Create Signing Files (Zero Start)
         script: |
           keychain initialize
           
-          # 1. Bundle ID yoksa Apple Portalında yarat
-          app-store-connect create-bundle-id "$BUNDLE_ID" "Flowify Game" || echo "ID zaten mevcut veya yaratılamadı, devam ediliyor..."
+          # Bundle ID'yi porta kaydet (Yoksa yaratır)
+          app-store-connect create-bundle-id "$BUNDLE_ID" "Flowify Game" || echo "ID mevcut."
           
-          # 2. Sertifika ve Profil yoksa yarat ve indir
-          # Bu komut 'sanki hiç yokmuş gibi' her şeyi sıfırdan halleder.
+          # Sertifikaları ve Profilleri sıfırdan oluştur ve indir
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           
-          # 3. İndirilenleri sisteme kur
+          # Anahtarlığa ekle ve profilleri projeye bağla
           keychain add-certificates
           xcode-project use-profiles
       
-      - name: Build IPA (Native)
+      - name: Build IPA (Native Clean)
         script: |
-          # Build number'ı otomatik al
+          # Build number'ı portaldan al
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
-          BUILD_NUMBER=$((LATEST_BUILD + 1))
+          NEXT_BUILD=$((LATEST_BUILD + 1))
           
-          # En sade ve hatasız build komutu
+          # Apple'ın aracını kullanarak build numarasını projenin içine yazalım
+          cd ios
+          agvtool new-version -all $NEXT_BUILD
+          cd ..
+          
+          # Şimdi tertemiz ve parametresiz build alalım
           xcode-project build-ipa \
             --workspace "ios/Runner.xcworkspace" \
-            --scheme "$XCODE_SCHEME" \
-            --build-number $BUILD_NUMBER
+            --scheme "$XCODE_SCHEME"
     
     artifacts:
       - build/ios/ipa/*.ipa
