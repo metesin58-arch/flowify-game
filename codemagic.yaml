@@ -1,6 +1,6 @@
 workflows:
   ios-release:
-    name: Flutter iOS Release
+    name: Flutter iOS Release (Ultra-Fix)
     instance_type: mac_mini_m2
     max_build_duration: 60
     integrations:
@@ -12,32 +12,58 @@ workflows:
       vars:
         BUNDLE_ID: "com.metestudios.flowifyzero" 
         XCODE_SCHEME: "Runner"
-        TEAM_ID: "ERUH5NNQUB"
     scripts:
-      - name: Set up code signing settings on Runner project
+      - name: Prep and Sanitize Project
         script: |
-          keychain initialize
-          # App Store Connect'ten profilleri çekelim
-          xcode-project use-profiles
+          # 1. Tam temizlik
+          flutter clean
+          flutter pub get
           
-          # Xcode projesini Manuel imzalama moduna zorlayalım (CI için en güvenli yol)
-          cd ios
-          sed -i '' "s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = $TEAM_ID;/g" Runner.xcodeproj/project.pbxproj
-          sed -i '' "s/ProvisioningStyle = Automatic;/ProvisioningStyle = Manual;/g" Runner.xcodeproj/project.pbxproj
-      
-      - name: Get Flutter packages
-        script: flutter pub get
-      
-      - name: Build IPA for App Store
+          # 2. Sertifika ve Profil Hazırlığı (Zeal Entegrasyonu üzerinden)
+          keychain initialize
+          xcode-project use-profiles --bundle-id="$BUNDLE_ID" --export-method=app-store --create
+          
+          # 3. Xcode Projesindeki 'Hayalet' Ayarları Temizleyelim
+          python3 -c "
+          import os, re
+          path = 'ios/Runner.xcodeproj/project.pbxproj'
+          if not os.path.exists(path): exit(0)
+          with open(path, 'r') as f: content = f.read()
+          
+          # Bundle ID'yi her yere zorla yaz
+          content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
+          
+          # Otomatik imzalama engelini kaldır
+          content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
+          content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
+          
+          # Eski sertifika referanslarını boşalt
+          content = re.sub(r'PROVISIONING_PROFILE = [^;]+;', 'PROVISIONING_PROFILE = \"\";', content)
+          content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', 'PROVISIONING_PROFILE_SPECIFIER = \"\";', content)
+          
+          with open(path, 'w') as f: f.write(content)
+          print('Xcode projesi CI için sterilize edildi.')
+          "
+
+      - name: Build and Sign IPA
         script: |
-          # Build number'ı otomatik artıralım veya App Store'dan çekelim
-          # --bundle-id flag'i bazı versiyonlarda sorun çıkarabiliyor, parametre olarak verelim
+          # Son build number'ı App Store'dan çek
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
           BUILD_NUMBER=$((LATEST_BUILD + 1))
           
+          # Flutter ile IPA'yı imzasız oluştur (Hata almamak için)
           flutter build ipa --release \
+            --build-number=$BUILD_NUMBER \
+            --export-method=app-store \
+            --no-codesign
+            
+          # Codemagic CLI ile az önce indirilen gerçek sertifikalarla imzala
+          xcode-project build-ipa \
+            --project ios/Runner.xcodeproj \
+            --scheme "$XCODE_SCHEME" \
+            --bundle-id "$BUNDLE_ID" \
             --export-method app-store \
-            --build-number=$BUILD_NUMBER
+            --build-number $BUILD_NUMBER
     
     artifacts:
       - build/ios/ipa/*.ipa
