@@ -36,14 +36,17 @@ workflows:
           keychain initialize
           
           echo "--- 1. Apple Portali ile Baglantı ve Mühürleme ---"
-          # MeteFinal API üzerinden sertifika ve profili hazırla
-          xcode-project use-profiles --create --bundle-id "$BUNDLE_ID"
+          # app-store-connect komutu --bundle-id ve --create bayraklarını destekler
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create || echo "Fetch başarısız, manuel dosyalar deneniyor..."
+          
+          # Codemagic UI üzerinden eklediğin (MeteFinal) sertifikaları sisteme yükler
+          keychain add-certificates
           
           # Profili dosyadan bul ve degiskenlere ata
           PROV_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -n 1)
           
           if [ -z "$PROV_PATH" ]; then
-            echo "HATA: Profil bulunamadı!"
+            echo "HATA: Ne Apple portalında ne de Codemagic UI'da geçerli bir profil bulunamadı!"
             exit 1
           fi
           
