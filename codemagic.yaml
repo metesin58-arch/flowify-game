@@ -1,6 +1,6 @@
 workflows:
   ios-native:
-    name: iOS Native Safe-Mode Build
+    name: iOS Native Safe-Mode Build V2
     instance_type: mac_mini_m2
     max_build_duration: 30
     integrations:
@@ -15,23 +15,30 @@ workflows:
       - name: Set up code signing
         script: |
           keychain initialize
-          # Official Codemagic method: fetch profiles based on bundle id
-          xcode-project use-profiles --bundle-id="$BUNDLE_ID" --export-method=app-store
+          
+          # Use app-store-connect CLI instead of xcode-project for more reliability
+          # This will fetch the certificate and profile and save them to the builder
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          
+          # Add the downloaded certificates to the keychain
+          keychain add-certificates
+          
+          # Apply profiles to the project
+          xcode-project use-profiles
       
-      - name: Build and Sign IPA
+      - name: Build IPA
         script: |
-          # Fetch latest build number from App Store Connect
+          # Fetch latest build number
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
           BUILD_NUMBER=$((LATEST_BUILD + 1))
           
-          # Use PlistBuddy to set version (most reliable native method)
+          # Set version
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
           
-          # Official build command: handles signing automatically via profiles fetched above
+          # Direct build with xcodebuild via xcode-project
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
-            --scheme "$XCODE_SCHEME" \
-            --export-method app-store
+            --scheme "$XCODE_SCHEME"
     
     artifacts:
       - build/ios/ipa/*.ipa
