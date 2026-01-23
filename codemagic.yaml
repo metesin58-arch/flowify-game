@@ -19,35 +19,39 @@ workflows:
           flutter clean
           flutter pub get
           
-          # 2. Sertifika ve Profil Hazırlığı (Zeal Entegrasyonu üzerinden)
+          # 2. Sertifika ve Profil Hazırlığı
           keychain initialize
           xcode-project use-profiles --bundle-id="$BUNDLE_ID" --export-method=app-store --create
           
-          # 3. Xcode Projesindeki 'Hayalet' Ayarları Temizleyelim
+          # 3. Xcode Projesini CI için Tamir Et
           python3 -c "
           import os, re
           path = 'ios/Runner.xcodeproj/project.pbxproj'
           if not os.path.exists(path): exit(0)
           with open(path, 'r') as f: content = f.read()
           
-          # Bundle ID'yi her yere zorla yaz
-          content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
+          team_id = 'ERUH5NNQUB'
+          bundle_id = os.environ['BUNDLE_ID']
           
-          # Otomatik imzalama engelini kaldır
+          # Bundle ID'yi her yere zorla yaz
+          content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};', content)
+          
+          # DEVELOPMENT_TEAM enjekte et (Build hatasını çözen kritik kısım)
+          if 'DEVELOPMENT_TEAM' not in content:
+              content = content.replace('buildSettings = {', f'buildSettings = {{\n\t\t\t\tDEVELOPMENT_TEAM = {team_id};')
+          else:
+              content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {team_id};', content)
+          
+          # Otomatik imzalama engellerini kaldır
           content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
           content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
           
-          # Eski sertifika referanslarını boşalt
-          content = re.sub(r'PROVISIONING_PROFILE = [^;]+;', 'PROVISIONING_PROFILE = \"\";', content)
-          content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', 'PROVISIONING_PROFILE_SPECIFIER = \"\";', content)
-          
           with open(path, 'w') as f: f.write(content)
-          print('Xcode projesi CI için sterilize edildi.')
+          print(f'Proje Sterilize Edildi: ID={bundle_id}, Team={team_id}')
           "
 
       - name: Build and Sign IPA
         script: |
-          # Son build number'ı App Store'dan çek
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
           BUILD_NUMBER=$((LATEST_BUILD + 1))
           
@@ -57,11 +61,10 @@ workflows:
             --export-method=app-store \
             --no-codesign
             
-          # Codemagic CLI ile az önce indirilen gerçek sertifikalarla imzala
+          # Codemagic CLI ile imzala (Komut hataları giderildi)
           xcode-project build-ipa \
-            --project ios/Runner.xcodeproj \
+            --workspace ios/Runner.xcworkspace \
             --scheme "$XCODE_SCHEME" \
-            --bundle-id "$BUNDLE_ID" \
             --export-method app-store \
             --build-number $BUILD_NUMBER
     
