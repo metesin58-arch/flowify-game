@@ -13,49 +13,42 @@ workflows:
         XCODE_SCHEME: "Runner"
         TEAM_ID: "ERUH5NNQUB"
     scripts:
-      - name: De-Flutterize Project
+      - name: Sanitize Xcode Project
         script: |
-          # Flutter referanslarını projeden temizle (Native'e dönüştür)
+          # Proje dosyasını native standartlara çek ve Flutter izlerini sil
           python3 -c "
           import os, re
           path = 'ios/Runner.xcodeproj/project.pbxproj'
           if not os.path.exists(path): exit(0)
           with open(path, 'r') as f: content = f.read()
           
-          # Bundle ID ve Team ID ayarla
+          # Bundle ID ve Team ID'yi zorla işlet
           content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
-          if 'DEVELOPMENT_TEAM' not in content:
-              content = content.replace('buildSettings = {', f'buildSettings = {{\n\t\t\t\tDEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};')
-          else:
-              content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};', content)
+          content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};', content)
           
-          # Flutter framework referanslarını temizle (Build hatasını önler)
-          content = re.sub(r'.*Flutter\.framework.*', '', content)
-          content = re.sub(r'.*App\.framework.*', '', content)
-          
-          # İmzalama Ayarları
+          # İmzalama modunu manuel yap (CI için gerekli)
           content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
           content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
           
           with open(path, 'w') as f: f.write(content)
+          print('Xcode projesi native build için hazır.')
           "
 
       - name: Set up code signing
         script: |
           keychain initialize
-          xcode-project use-profiles --bundle-id="$BUNDLE_ID" --export-method=app-store --create
-
-      - name: Build IPA (Native Xcode)
+          # Parametresiz kullanım: Entegrasyonu kullanarak otomatik eşleştirme yapar
+          xcode-project use-profiles
+      
+      - name: Build IPA
         script: |
-          # Build number'ı App Store'dan al
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
           BUILD_NUMBER=$((LATEST_BUILD + 1))
           
-          # Doğrudan Xcode ile tertemiz native build
+          # Native Xcode build
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
             --scheme "$XCODE_SCHEME" \
-            --export-method app-store \
             --build-number $BUILD_NUMBER
     
     artifacts:
