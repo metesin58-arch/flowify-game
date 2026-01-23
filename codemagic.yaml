@@ -13,10 +13,10 @@ workflows:
         XCODE_SCHEME: "Runner"
         TEAM_ID: "ERUH5NNQUB"
     scripts:
-      - name: Upgrade Codemagic Tools
+      - name: Upgrade CLI Tools
         script: pip3 install codemagic-cli-tools --upgrade
         
-      - name: Sanitize Xcode Project
+      - name: Sanitize and Prep Project
         script: |
           python3 -c "
           import os, re
@@ -28,25 +28,40 @@ workflows:
           content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
           content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};', content)
           
-          # İmzalama modunu manuel yapıyoruz çünkü use-profiles manuel kontrol ister
+          # İmzalama modunu manuel yap (CI için en güvenlisi)
           content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
           content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
           
           with open(path, 'w') as f: f.write(content)
+          print('Xcode projesi temizlendi.')
           "
 
-      - name: Set up code signing (Create Automatically)
+      - name: Force Create Signing Files (Zero Start)
         script: |
           keychain initialize
-          # Artık güncellendiği için --create komutu çalışacak
-          xcode-project use-profiles --bundle-id="$BUNDLE_ID" --export-method=app-store --create
+          
+          # 1. Bundle ID yoksa Apple Portalında yarat
+          app-store-connect create-bundle-id "$BUNDLE_ID" "Flowify Game" || echo "ID zaten mevcut veya yaratılamadı, devam ediliyor..."
+          
+          # 2. Sertifika ve Profil yoksa yarat ve indir
+          # Bu komut 'sanki hiç yokmuş gibi' her şeyi sıfırdan halleder.
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          
+          # 3. İndirilenleri sisteme kur
+          keychain add-certificates
+          xcode-project use-profiles
       
-      - name: Build IPA
+      - name: Build IPA (Native)
         script: |
-          # En güvenli build komutu
+          # Build number'ı otomatik al
+          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
+          BUILD_NUMBER=$((LATEST_BUILD + 1))
+          
+          # En sade ve hatasız build komutu
           xcode-project build-ipa \
-            --workspace="ios/Runner.xcworkspace" \
-            --scheme="$XCODE_SCHEME"
+            --workspace "ios/Runner.xcworkspace" \
+            --scheme "$XCODE_SCHEME" \
+            --build-number $BUILD_NUMBER
     
     artifacts:
       - build/ios/ipa/*.ipa
