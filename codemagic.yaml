@@ -9,7 +9,7 @@ workflows:
       xcode: latest
       cocoapods: default
       vars:
-        BUNDLE_ID: "com.metestudios.flowifygame"
+        BUNDLE_ID: "com.metestudios.flowify"
         XCODE_SCHEME: "App"
         TEAM_ID: "ERUH5NNQUB" 
     scripts:
