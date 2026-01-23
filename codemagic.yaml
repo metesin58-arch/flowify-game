@@ -1,67 +1,57 @@
 workflows:
-  ios-release:
-    name: Flutter iOS Release (Ultra-Fix)
+  ios-native:
+    name: iOS Native Premium Build
     instance_type: mac_mini_m2
-    max_build_duration: 60
+    max_build_duration: 30
     integrations:
       app_store_connect: Zeal
     environment:
-      flutter: stable
       xcode: latest
       cocoapods: default
       vars:
         BUNDLE_ID: "com.metestudios.flowifyzero" 
         XCODE_SCHEME: "Runner"
+        TEAM_ID: "ERUH5NNQUB"
     scripts:
-      - name: Prep and Sanitize Project
+      - name: De-Flutterize Project
         script: |
-          # 1. Tam temizlik
-          flutter clean
-          flutter pub get
-          
-          # 2. Sertifika ve Profil Hazırlığı
-          keychain initialize
-          xcode-project use-profiles --bundle-id="$BUNDLE_ID" --export-method=app-store --create
-          
-          # 3. Xcode Projesini CI için Tamir Et
+          # Flutter referanslarını projeden temizle (Native'e dönüştür)
           python3 -c "
           import os, re
           path = 'ios/Runner.xcodeproj/project.pbxproj'
           if not os.path.exists(path): exit(0)
           with open(path, 'r') as f: content = f.read()
           
-          team_id = 'ERUH5NNQUB'
-          bundle_id = os.environ['BUNDLE_ID']
-          
-          # Bundle ID'yi her yere zorla yaz
-          content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};', content)
-          
-          # DEVELOPMENT_TEAM enjekte et (Build hatasını çözen kritik kısım)
+          # Bundle ID ve Team ID ayarla
+          content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
           if 'DEVELOPMENT_TEAM' not in content:
-              content = content.replace('buildSettings = {', f'buildSettings = {{\n\t\t\t\tDEVELOPMENT_TEAM = {team_id};')
+              content = content.replace('buildSettings = {', f'buildSettings = {{\n\t\t\t\tDEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};')
           else:
-              content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {team_id};', content)
+              content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};', content)
           
-          # Otomatik imzalama engellerini kaldır
+          # Flutter framework referanslarını temizle (Build hatasını önler)
+          content = re.sub(r'.*Flutter\.framework.*', '', content)
+          content = re.sub(r'.*App\.framework.*', '', content)
+          
+          # İmzalama Ayarları
           content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
           content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
           
           with open(path, 'w') as f: f.write(content)
-          print(f'Proje Sterilize Edildi: ID={bundle_id}, Team={team_id}')
           "
 
-      - name: Build and Sign IPA
+      - name: Set up code signing
         script: |
+          keychain initialize
+          xcode-project use-profiles --bundle-id="$BUNDLE_ID" --export-method=app-store --create
+
+      - name: Build IPA (Native Xcode)
+        script: |
+          # Build number'ı App Store'dan al
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
           BUILD_NUMBER=$((LATEST_BUILD + 1))
           
-          # Flutter ile IPA'yı imzasız oluştur (Hata almamak için)
-          flutter build ipa --release \
-            --build-number=$BUILD_NUMBER \
-            --export-method=app-store \
-            --no-codesign
-            
-          # Codemagic CLI ile imzala (Komut hataları giderildi)
+          # Doğrudan Xcode ile tertemiz native build
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
             --scheme "$XCODE_SCHEME" \
