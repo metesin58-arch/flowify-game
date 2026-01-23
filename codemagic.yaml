@@ -13,6 +13,9 @@ workflows:
         XCODE_SCHEME: "Runner"
         TEAM_ID: "ERUH5NNQUB"
     scripts:
+      - name: Upgrade Codemagic Tools
+        script: pip3 install codemagic-cli-tools --upgrade
+        
       - name: Sanitize Xcode Project
         script: |
           python3 -c "
@@ -25,25 +28,25 @@ workflows:
           content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
           content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};', content)
           
-          # İmzalama modunu 'Otomatik' bırakıyoruz (Codemagic --create ile bunu yönetir)
-          # Ama CI için en güvenlisi 'Manual' yapıp profilin oluşmasını beklemektir.
-          # Biz burada projeyi en temiz haline getiriyoruz.
+          # İmzalama modunu manuel yapıyoruz çünkü use-profiles manuel kontrol ister
+          content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
+          content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
+          
           with open(path, 'w') as f: f.write(content)
           "
 
-      - name: Set up code signing (Create Everything)
+      - name: Set up code signing (Create Automatically)
         script: |
           keychain initialize
-          # --create flag'i ile olmayan her şeyi Apple Portalda yaratır.
-          xcode-project use-profiles --create
+          # Artık güncellendiği için --create komutu çalışacak
+          xcode-project use-profiles --bundle-id="$BUNDLE_ID" --export-method=app-store --create
       
-      - name: Build IPA (Bare Minimum)
+      - name: Build IPA
         script: |
-          # Sadece en gerekli parametrelerle build. 
-          # Karmaşık flagleri (build-number gibi) kaldırdık.
+          # En güvenli build komutu
           xcode-project build-ipa \
-            --workspace ios/Runner.xcworkspace \
-            --scheme "$XCODE_SCHEME"
+            --workspace="ios/Runner.xcworkspace" \
+            --scheme="$XCODE_SCHEME"
     
     artifacts:
       - build/ios/ipa/*.ipa
