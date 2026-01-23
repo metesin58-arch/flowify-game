@@ -31,20 +31,34 @@ workflows:
         script: |
           cd ios/App && pod install
       
-      - name: Setup Signing (Fully Automatic)
+      - name: Setup Signing (MeteFinal)
         script: |
           keychain initialize
-          # API Key (MeteFinal) kullanarak sertifika ve profil yönetimini tamamen otomatikleştiriyoruz
-          xcode-project use-profiles --create
           
-          # Build için hangi profilin seçildiğini loglara basalım (Kontrol amaçlı)
+          # 1. Eğer Codemagic UI üzerinden (Code Signing kısmı) dosya yüklediysen onları ekle
+          keychain add-certificates
+          
+          # 2. Eğer dosyalar UI'da yoksa, API (MeteFinal) üzerinden portal'dan çekmeyi dene
           PROV_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -n 1)
+          
+          if [ -z "$PROV_PATH" ]; then
+            echo "Profil bulunamadı, API (MeteFinal) üzerinden çekiliyor..."
+            app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE
+            keychain add-certificates
+            PROV_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" | head -n 1)
+          fi
+          
+          if [ -z "$PROV_PATH" ]; then
+            echo "HATA: Ne UI'da ne de Apple Portal'da geçerli bir profil bulunamadı! Lütfen 'MeteFinal' isimli integration'ı veya profilleri kontrol et."
+            exit 1
+          fi
+          
           PROV_UUID=$(grep -aA1 "UUID" "$PROV_PATH" | grep -o "[0-9a-fA-F-]\{36\}")
           PROV_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< $(security cms -D -i "$PROV_PATH"))
           
           echo "PROV_UUID=$PROV_UUID" >> $CM_ENV
           echo "PROV_NAME=\"$PROV_NAME\"" >> $CM_ENV
-          echo "HAYIRLI OLSUN: $PROV_NAME hazır!"
+          echo "MeteFinal Mührü Hazır: $PROV_NAME"
 
       - name: Build iOS app
         script: |
