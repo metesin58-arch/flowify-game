@@ -15,41 +15,35 @@ workflows:
     scripts:
       - name: Sanitize Xcode Project
         script: |
-          # Proje dosyasını native standartlara çek ve Flutter izlerini sil
           python3 -c "
           import os, re
           path = 'ios/Runner.xcodeproj/project.pbxproj'
           if not os.path.exists(path): exit(0)
           with open(path, 'r') as f: content = f.read()
           
-          # Bundle ID ve Team ID'yi zorla işlet
+          # Bundle ID ve Team ID'yi enjekte et
           content = re.sub(r'PRODUCT_BUNDLE_IDENTIFIER = [^;]+;', f'PRODUCT_BUNDLE_IDENTIFIER = {os.environ[\"BUNDLE_ID\"]};', content)
           content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', f'DEVELOPMENT_TEAM = {os.environ[\"TEAM_ID\"]};', content)
           
-          # İmzalama modunu manuel yap (CI için gerekli)
-          content = content.replace('ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;')
-          content = content.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;')
-          
+          # İmzalama modunu 'Otomatik' bırakıyoruz (Codemagic --create ile bunu yönetir)
+          # Ama CI için en güvenlisi 'Manual' yapıp profilin oluşmasını beklemektir.
+          # Biz burada projeyi en temiz haline getiriyoruz.
           with open(path, 'w') as f: f.write(content)
-          print('Xcode projesi native build için hazır.')
           "
 
-      - name: Set up code signing
+      - name: Set up code signing (Create Everything)
         script: |
           keychain initialize
-          # Parametresiz kullanım: Entegrasyonu kullanarak otomatik eşleştirme yapar
-          xcode-project use-profiles
+          # --create flag'i ile olmayan her şeyi Apple Portalda yaratır.
+          xcode-project use-profiles --create
       
-      - name: Build IPA
+      - name: Build IPA (Bare Minimum)
         script: |
-          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
-          BUILD_NUMBER=$((LATEST_BUILD + 1))
-          
-          # Native Xcode build
+          # Sadece en gerekli parametrelerle build. 
+          # Karmaşık flagleri (build-number gibi) kaldırdık.
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
-            --scheme "$XCODE_SCHEME" \
-            --build-number $BUILD_NUMBER
+            --scheme "$XCODE_SCHEME"
     
     artifacts:
       - build/ios/ipa/*.ipa
