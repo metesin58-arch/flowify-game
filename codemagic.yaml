@@ -19,54 +19,60 @@ workflows:
         script: |
           keychain initialize
           
-          # 1. Temizlik ve Taze Başlangıç
+          # 1. Tam Temizlik
           rm -rf ~/Library/MobileDevice/Provisioning\ Profiles/*
           
-          # 2. Sertifika ve Profil Al (Otomatik Yaratma Modu)
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          # 2. Sertifika ve Profil Al (Hata alsa da devam et, scriptimiz yakalayacak)
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create || true
           
           keychain add-certificates
           
-          # 3. NÜKLEER ENJEKSİYON (Projenin her yerini imzalıyoruz)
+          # 3. MANUEL INJECTION (UUID + NAME + IDENTITY)
+          # Xcode'un en alt seviye ayarlarını zorla değiştiriyoruz.
           python3 -c "
-          import os, re, glob
+          import os, re, glob, subprocess
           
           profile_pattern = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision')
           profiles = glob.glob(profile_pattern)
-          if profiles:
-              with open(profiles[0], 'rb') as f:
-                  content = f.read().decode('latin-1')
-                  name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
-                  profile_name = name_match.group(1) if name_match else None
-                  
-              if profile_name:
-                  proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
-                  with open(proj_path, 'r') as f:
-                      proj_content = f.read()
-                  
-                  # TÜM buildSettings bloklarına Apple Distribution ayarlarını göm
-                  settings_to_inject = [
-                      f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";',
-                      'DEVELOPMENT_TEAM = ERUH5NNQUB;',
-                      'CODE_SIGN_STYLE = Manual;',
-                      'CODE_SIGN_IDENTITY = \"Apple Distribution\";',
-                      '\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";'
-                  ]
-                  
-                  # Temizlik: Eski çakışan ayarları sil
-                  proj_content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', '', proj_content)
-                  proj_content = re.sub(r'CODE_SIGN_IDENTITY = [^;]+;', '', proj_content)
-                  
-                  # Enjeksiyon
-                  def inject(match):
-                      return match.group(0) + '\n\t\t\t\t' + '\n\t\t\t\t'.join(settings_to_inject)
-                  
-                  final_content = re.sub(r'buildSettings = \{', inject, proj_content)
-                  with open(proj_path, 'w') as f:
-                      f.write(final_content)
-                  print(f'GLOBAL INJECTION SUCCESS: {profile_name}')
+          if not profiles:
+              print('ERROR: No mobileprovision found! Build will likely fail.')
+              exit(0)
+          
+          # UUID ve Ismi Apple'ın kendi aracıyla çek (Hata payı sıfır)
+          profile_path = profiles[0]
+          uuid = subprocess.getoutput(f'grep -aA1 \'UUID\' {profile_path} | grep -oE \'[a-f0-9]{{8}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{12}}\'')
+          with open(profile_path, 'rb') as f:
+              content = f.read().decode('latin-1')
+              name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
+              profile_name = name_match.group(1)
+
+          print(f'Detected Profile: {profile_name} (UUID: {uuid})')
+
+          proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
+          with open(proj_path, 'r') as f:
+              proj = f.read()
+
+          # Xcode'u ikna etmek için 3 ana ayarı Runner target'ına zorla işliyoruz
+          new_settings = [
+              f'PROVISIONING_PROFILE = \"{uuid}\";',
+              f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";',
+              'DEVELOPMENT_TEAM = ERUH5NNQUB;',
+              'CODE_SIGN_STYLE = Manual;',
+              'CODE_SIGN_IDENTITY = \"Apple Distribution\";',
+              '\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";'
+          ]
+
+          # Eski ayarları temizle
+          for key in ['PROVISIONING_PROFILE', 'PROVISIONING_PROFILE_SPECIFIER', 'CODE_SIGN_IDENTITY', 'CODE_SIGN_STYLE']:\n              proj = re.sub(f'{key} = [^;]+;', '', proj)
+
+          # buildSettings içine enjekte et
+          proj = proj.replace('buildSettings = {', 'buildSettings = {\\n\\t\\t\\t\\t' + '\\n\\t\\t\\t\\t'.join(new_settings))
+          
+          with open(proj_path, 'w') as f:
+              f.write(proj)
+          
+          print('SUCCESS: Project file manually hardcoded for signing.')
           "
-          xcode-project use-profiles
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
