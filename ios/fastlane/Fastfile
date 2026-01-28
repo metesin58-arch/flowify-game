@@ -25,6 +25,16 @@ platform :ios do
       force: true
     )
 
+    # Set version and build number
+    current_build = latest_testflight_build_number(
+      api_key: api_key,
+      app_identifier: "com.metestudios.flowify2"
+    )
+    increment_build_number(
+      build_number: current_build + 1,
+      xcodeproj: "Runner.xcodeproj"
+    )
+
     # Build the app using gym (Xcode Build)
     gym(
       scheme: "Runner",
