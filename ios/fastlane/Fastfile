@@ -6,7 +6,7 @@ platform :ios do
     # 1. CI Ortamında geçici bir anahtarlık (keychain) oluştur ve kilidini aç
     keychain_name = "build_keychain"
     keychain_password = "password" # Bu şifre sadece build sunucusunda geçicidir
-    keychain_path = File.expanduser("~/Library/Keychains/#{keychain_name}-db")
+    keychain_path = File.expand_path("~/Library/Keychains/#{keychain_name}-db")
     
     # Eskiyi temizle
     delete_keychain(name: keychain_name) if File.exist?(keychain_path)
