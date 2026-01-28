@@ -6,9 +6,6 @@ workflows:
     integrations:
       app_store_connect: Flowify2026
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.metestudios.flowify2
       xcode: latest
       flutter: stable
       cocoapods: default
@@ -22,48 +19,53 @@ workflows:
         script: |
           keychain initialize
           
-          # Codemagic otomatik olarak sertifikaları getirecek, biz sadece profili zorluyoruz
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          # 1. Taze bir Apple Distribution sertifikası yarat ve kaydet
+          echo "Creating new Apple Distribution certificate..."
+          app-store-connect certificates create --type DISTRIBUTION --save || echo "Cert creation failed, but continuing..."
+          
+          # 2. Bundle ID için yeni bir App Store profili yarat
+          # Not: Eğer profil zaten varsa 'create' hata verebilir, o yüzden get/create mantığıyla ilerliyoruz
+          echo "Creating Provisioning Profile for $BUNDLE_ID..."
+          app-store-connect profiles create --name "Flowify CI Profile" --bundle-id "$BUNDLE_ID" --type IOS_APP_STORE || echo "Profile creation failed"
           
           keychain add-certificates
           
-          # MANUEL INJECTION (Zorla eşleştirme - Daha güvenli versiyon)
+          # 3. MANUEL INJECTION (Zorla eşleştirme)
           python3 -c "
           import os, re, glob
           
           profile_pattern = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision')
           profiles = glob.glob(profile_pattern)
-          if not profiles:
-              print('No profile found, keeping project defaults')
-              exit(0)
-          
-          with open(profiles[0], 'rb') as f:
-              content = f.read().decode('latin-1')
-              name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
-              profile_name = name_match.group(1) if name_match else None
-
-          if profile_name:
-              proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
-              with open(proj_path, 'r') as f:
-                  proj_content = f.read()
-              
-              # Sadece Runner target'ına odaklan (Diğer podları bozma)
-              # PROVISIONING_PROFILE_SPECIFIER ve imzalama ayarlarını enjekte et
-              new_settings = [
-                  f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";',
-                  'CODE_SIGN_STYLE = Manual;',
-                  'CODE_SIGN_IDENTITY = \"Apple Distribution\";'
-              ]
-              
-              # BuildSettings bloklarına güvenli enjeksiyon
-              def inject(match):
-                  return match.group(0) + '\n\t\t\t\t' + '\n\t\t\t\t'.join(new_settings)
-              
-              final_content = re.sub(r'buildSettings = \{', inject, proj_content)
-              with open(proj_path, 'w') as f:
-                  f.write(final_content)
-              print(f'Successfully injected {profile_name}')
+          if profiles:
+              with open(profiles[0], 'rb') as f:
+                  content = f.read().decode('latin-1')
+                  name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
+                  profile_name = name_match.group(1) if name_match else None
+                  
+              if profile_name:
+                  proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
+                  with open(proj_path, 'r') as f:
+                      proj_content = f.read()
+                  
+                  new_settings = [
+                      f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";',
+                      'CODE_SIGN_STYLE = Manual;',
+                      'CODE_SIGN_IDENTITY = \"Apple Distribution\";',
+                      '\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";'
+                  ]
+                  def inject(match):
+                      return match.group(0) + '\n\t\t\t\t' + '\n\t\t\t\t'.join(new_settings)
+                  
+                  final_content = re.sub(r'buildSettings = \{', inject, proj_content)
+                  with open(proj_path, 'w') as f:
+                      f.write(final_content)
+                  print(f'Project updated with: {profile_name}')
+          else:
+              print('No mobileprovision found to inject, will try standard xcode-project tool')
           "
+          
+          # 4. Standart eşleştirmeyi de ek olarak dene
+          xcode-project use-profiles
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
