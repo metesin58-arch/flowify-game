@@ -7,12 +7,14 @@ workflows:
       app_store_connect: Flowify2026
     environment:
       xcode: latest
+      flutter: stable
       cocoapods: default
       vars:
         BUNDLE_ID: "com.metestudios.flowify2"
     scripts:
       - name: Install dependencies
         script: |
+          flutter upgrade
           flutter packages pub get
       - name: Install Pods
         script: |
