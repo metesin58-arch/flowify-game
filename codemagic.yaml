@@ -38,8 +38,48 @@ workflows:
           echo "--- DIAGNOSTICS END ---"
           
           # Apply profiles to the project
-          # Not: 'use-profiles' komutu argüman almazsa tüm indirilenleri eşleştirir.
+          # 1. Standart komutu dene
           xcode-project use-profiles
+          
+          # 2. MANUEL INJECTION (Zorla eşleştirme)
+          # Eğer use-profiles başarısız olursa, projenin içine profil ismini biz yazıyoruz.
+          python3 -c "
+          import os, re, glob
+          from pathlib import Path
+          
+          # Profili bul
+          profile_path = glob.glob(os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision'))
+          if not profile_path:
+              print('No profile found to inject')
+              exit(0)
+          
+          # Profil ismini oku
+          with open(profile_path[0], 'rb') as f:
+              content = f.read().decode('latin-1')
+              match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
+              if not match:
+                  print('Could not extract profile name')
+                  exit(0)
+              profile_name = match.group(1)
+              print(f'Injecting Profile Name: {profile_name}')
+          
+          # Projeye yaz
+          proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
+          with open(proj_path, 'r') as f:
+              proj_content = f.read()
+          
+          # PROVISIONING_PROFILE_SPECIFIER ekle/güncelle
+          if 'PROVISIONING_PROFILE_SPECIFIER' in proj_content:
+              new_content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = \".*\";', f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";', proj_content)
+              new_content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";', new_content)
+          else:
+              # buildSettings bloğuna ekle
+              new_content = proj_content.replace('buildSettings = {', f'buildSettings = {{\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";')
+          
+          with open(proj_path, 'w') as f:
+              f.write(new_content)
+          print('Successfully injected PROVISIONING_PROFILE_SPECIFIER')
+          "
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
@@ -56,7 +96,8 @@ workflows:
           flutter build ios --release --no-codesign
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
-            --scheme Runner
+            --scheme Runner \
+            --bundle-id "$BUNDLE_ID"
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
