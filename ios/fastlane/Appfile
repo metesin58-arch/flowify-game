@@ -1,0 +1,4 @@
+app_identifier("com.metestudios.flowify2")
+apple_id("metesin_58@hotmail.com") # User's email from logs
+itc_team_id("123308708") # Will verify this if possible but usually not needed with API key
+team_id("ERUH5NNQUB")

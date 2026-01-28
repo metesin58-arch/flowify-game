@@ -1,0 +1,42 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Push a new beta build to TestFlight"
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id: ENV["APP_STORE_CONNECT_KEY_ID"],
+      issuer_id: ENV["APP_STORE_CONNECT_ISSUER_ID"],
+      key_content: ENV["APP_STORE_CONNECT_KEY_CONTENT"],
+      is_key_content_base64: false
+    )
+
+    # Fetch/Create Certificate
+    get_certificates(
+      api_key: api_key,
+      development: false,
+      generate_apple_certs: true
+    )
+
+    # Fetch/Create Provisioning Profile
+    get_provisioning_profile(
+      api_key: api_key,
+      development: false,
+      app_identifier: "com.metestudios.flowify2",
+      force: true
+    )
+
+    # Build the app using gym (Xcode Build)
+    gym(
+      scheme: "Runner",
+      workspace: "Runner.xcworkspace",
+      include_bitcode: false,
+      export_method: "app-store"
+    )
+
+    # Upload to TestFlight
+    pilot(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
