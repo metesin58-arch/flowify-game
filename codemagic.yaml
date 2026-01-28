@@ -6,6 +6,9 @@ workflows:
     integrations:
       app_store_connect: Flowify2026
     environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.metestudios.flowify2
       xcode: latest
       flutter: stable
       cocoapods: default
@@ -19,92 +22,47 @@ workflows:
         script: |
           keychain initialize
           
-          echo "--- DIAGNOSTICS START ---"
-          echo "Listing available Certificates on Apple Portal..."
-          app-store-connect certificates list || echo "Could not list certificates"
-          
-          echo "Listing available Provisioning Profiles on Apple Portal..."
-          app-store-connect profiles list || echo "Could not list profiles"
-          
-          echo "Listing available Bundle IDs..."
-          app-store-connect bundle-ids list || echo "Could not list bundle IDs"
-          
-          # Cleanup old files
-          rm -rf ~/Library/MobileDevice/Provisioning\ Profiles/*
-          rm -rf ~/Library/MobileDevice/Certificates/*
-          
-          # Fetch/Create certificates and profiles
-          echo "Fetching/Creating signing files for $BUNDLE_ID..."
+          # Codemagic otomatik olarak sertifikaları getirecek, biz sadece profili zorluyoruz
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           
           keychain add-certificates
           
-          echo "Checking downloaded profiles folder..."
-          ls ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "No profiles found!"
-          
-          echo "--- DIAGNOSTICS END ---"
-          
-          # Apply profiles to the project
-          # 1. Standart komutu dene
-          xcode-project use-profiles
-          
-          # 2. MANUEL INJECTION (Zorla eşleştirme)
+          # MANUEL INJECTION (Zorla eşleştirme - Daha güvenli versiyon)
           python3 -c "
           import os, re, glob
           
-          # 1. Profili bul
           profile_pattern = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision')
           profiles = glob.glob(profile_pattern)
           if not profiles:
-              print('ERROR: No .mobileprovision files found!')
-              exit(1)
+              print('No profile found, keeping project defaults')
+              exit(0)
           
-          # 2. Profil ismini ve Team ID'yi oku
           with open(profiles[0], 'rb') as f:
               content = f.read().decode('latin-1')
               name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
-              team_match = re.search(r'<key>TeamIdentifier</key>\s*<array>\s*<string>([^<]+)</string>', content)
-              
-              if not name_match:
-                  print('ERROR: Could not find Name in profile')
-                  exit(1)
-              
-              profile_name = name_match.group(1)
-              team_id = team_match.group(1) if team_match else 'ERUH5NNQUB'
-              
-              print(f'Detected Profile: {profile_name}')
-              print(f'Detected Team ID: {team_id}')
+              profile_name = name_match.group(1) if name_match else None
 
-          # 3. project.pbxproj dosyasını güncelle
-          proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
-          with open(proj_path, 'r') as f:
-              proj_content = f.read()
-
-          # Temizlik: Eski ayarları sil
-          proj_content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', '', proj_content)
-          proj_content = re.sub(r'CODE_SIGN_STYLE = [^;]+;', '', proj_content)
-          proj_content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', '', proj_content)
-          proj_content = re.sub(r'\"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]\" = [^;]+;', '', proj_content)
-          proj_content = re.sub(r'CODE_SIGN_IDENTITY = [^;]+;', '', proj_content)
-          
-          # Yeni ayarları tüm buildSettings bloklarına enjekte et
-          new_settings = [
-              f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";',
-              f'DEVELOPMENT_TEAM = {team_id};',
-              'CODE_SIGN_STYLE = Manual;',
-              'CODE_SIGN_IDENTITY = \"Apple Distribution\";',
-              '\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";'
-          ]
-          
-          def inject(match):
-              return match.group(0) + '\n\t\t\t\t' + '\n\t\t\t\t'.join(new_settings)
-
-          final_content = re.sub(r'buildSettings = \{', inject, proj_content)
-          
-          with open(proj_path, 'w') as f:
-              f.write(final_content)
-          
-          print('Successfully injected signing values into ALL buildSettings blocks!')
+          if profile_name:
+              proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
+              with open(proj_path, 'r') as f:
+                  proj_content = f.read()
+              
+              # Sadece Runner target'ına odaklan (Diğer podları bozma)
+              # PROVISIONING_PROFILE_SPECIFIER ve imzalama ayarlarını enjekte et
+              new_settings = [
+                  f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";',
+                  'CODE_SIGN_STYLE = Manual;',
+                  'CODE_SIGN_IDENTITY = \"Apple Distribution\";'
+              ]
+              
+              # BuildSettings bloklarına güvenli enjeksiyon
+              def inject(match):
+                  return match.group(0) + '\n\t\t\t\t' + '\n\t\t\t\t'.join(new_settings)
+              
+              final_content = re.sub(r'buildSettings = \{', inject, proj_content)
+              with open(proj_path, 'w') as f:
+                  f.write(final_content)
+              print(f'Successfully injected {profile_name}')
           "
       - name: Set versioning
         script: |
