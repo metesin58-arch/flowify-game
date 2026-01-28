@@ -24,17 +24,30 @@ workflows:
         script: |
           keychain initialize
           
-          # Force fetch/create both App Store and Development profiles
+          echo "--- DIAGNOSTICS START ---"
+          echo "Listing available Certificates..."
+          app-store-connect list-certificates || echo "Could not list certificates"
+          
+          echo "Listing available Bundle IDs..."
+          app-store-connect list-bundle-ids || echo "Could not list bundle IDs"
+          
+          # Fetch/Create certificates and profiles
+          echo "Fetching signing files for $BUNDLE_ID..."
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_DEVELOPMENT --create
           
           keychain add-certificates
           
-          # Debug: Profil indirildi mi kontrol et
-          echo "Checking downloaded profiles..."
-          ls ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "No profiles found!"
+          echo "Checking downloaded profiles folder..."
+          DOWNLOADED_PROFILES=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/)
+          if [ -z "$DOWNLOADED_PROFILES" ]; then
+            echo "ERROR: No profiles were downloaded!"
+          else
+            echo "Downloaded profiles:"
+            echo "$DOWNLOADED_PROFILES"
+          fi
+          echo "--- DIAGNOSTICS END ---"
           
-          # Xcode projesindeki signing ayarlarını zorla Manual yap ve profili eşleştir
+          # Apply profiles to the project
           xcode-project use-profiles --bundle-id "$BUNDLE_ID"
       - name: Set versioning
         script: |
