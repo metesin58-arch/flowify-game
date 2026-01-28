@@ -23,9 +23,11 @@ workflows:
       - name: Set up code signing
         script: |
           keychain initialize
-          # Bu komut hem sertifikaları hem de profilleri Apple Portal'dan çeker/oluşturur.
+          # Fetch/Create certificates and profiles
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           keychain add-certificates
+          # Xcode'un profilleri tanıması için bu komut kritik
+          xcode-project use-profiles --bundle-id "$BUNDLE_ID"
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
