@@ -9,7 +9,6 @@ workflows:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.metestudios.flowify2
-        team_id: ERUH5NNQUB
       xcode: latest
       cocoapods: default
       vars:
