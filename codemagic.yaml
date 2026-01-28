@@ -6,6 +6,9 @@ workflows:
     integrations:
       app_store_connect: Flowify2026
     environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.metestudios.flowify2
       xcode: latest
       flutter: stable
       cocoapods: default
@@ -19,60 +22,66 @@ workflows:
         script: |
           keychain initialize
           
-          # 1. Tam Temizlik
+          # 1. Cleanup and Fresh Fetch
           rm -rf ~/Library/MobileDevice/Provisioning\ Profiles/*
-          
-          # 2. Sertifika ve Profil Al (Hata alsa da devam et, scriptimiz yakalayacak)
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create || true
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create || echo "Fetch failed, checking manual injection..."
           
           keychain add-certificates
           
-          # 3. MANUEL INJECTION (UUID + NAME + IDENTITY)
-          # Xcode'un en alt seviye ayarlarını zorla değiştiriyoruz.
-          python3 -c "
+          # 2. MANUEL ENJEKSİYON (UUID + NAME + IDENTITY) - EOF kullanarak yazıyoruz (Hata payı yok)
+          python3 <<'EOF'
           import os, re, glob, subprocess
           
           profile_pattern = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision')
           profiles = glob.glob(profile_pattern)
           if not profiles:
-              print('ERROR: No mobileprovision found! Build will likely fail.')
+              print('ERROR: No mobileprovision found!')
               exit(0)
           
-          # UUID ve Ismi Apple'ın kendi aracıyla çek (Hata payı sıfır)
           profile_path = profiles[0]
-          uuid = subprocess.getoutput(f'grep -aA1 \'UUID\' {profile_path} | grep -oE \'[a-f0-9]{{8}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{12}}\'')
+          # UUID extraction
+          try:
+              uuid = subprocess.check_output(f"grep -aA1 'UUID' '{profile_path}' | grep -oE '[a-f0-9]{{8}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{12}}'", shell=True).decode().strip()
+          except:
+              uuid = "NOT_FOUND"
+
           with open(profile_path, 'rb') as f:
               content = f.read().decode('latin-1')
               name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
-              profile_name = name_match.group(1)
+              profile_name = name_match.group(1) if name_match else "Unknown"
 
           print(f'Detected Profile: {profile_name} (UUID: {uuid})')
 
           proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
+          if not os.path.exists(proj_path):
+              exit(1)
+
           with open(proj_path, 'r') as f:
               proj = f.read()
 
-          # Xcode'u ikna etmek için 3 ana ayarı Runner target'ına zorla işliyoruz
+          # Sadece Runner target'ına ait buildSettings bloklarını bul ve güncelle
+          # Bu yöntem en güvenli manuel kodlamadır
           new_settings = [
-              f'PROVISIONING_PROFILE = \"{uuid}\";',
-              f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";',
+              f'PROVISIONING_PROFILE = "{uuid}";',
+              f'PROVISIONING_PROFILE_SPECIFIER = "{profile_name}";',
               'DEVELOPMENT_TEAM = ERUH5NNQUB;',
               'CODE_SIGN_STYLE = Manual;',
-              'CODE_SIGN_IDENTITY = \"Apple Distribution\";',
-              '\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";'
+              'CODE_SIGN_IDENTITY = "Apple Distribution";',
+              '"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";'
           ]
 
           # Eski ayarları temizle
-          for key in ['PROVISIONING_PROFILE', 'PROVISIONING_PROFILE_SPECIFIER', 'CODE_SIGN_IDENTITY', 'CODE_SIGN_STYLE']:\n              proj = re.sub(f'{key} = [^;]+;', '', proj)
+          for key in ['PROVISIONING_PROFILE', 'PROVISIONING_PROFILE_SPECIFIER', 'CODE_SIGN_IDENTITY', 'CODE_SIGN_STYLE']:
+              proj = re.sub(f'{key} = [^;]+;', '', proj)
 
-          # buildSettings içine enjekte et
-          proj = proj.replace('buildSettings = {', 'buildSettings = {\\n\\t\\t\\t\\t' + '\\n\\t\\t\\t\\t'.join(new_settings))
+          # Yeni ayarları enjekte et
+          proj = proj.replace('buildSettings = {', 'buildSettings = {\n\t\t\t\t' + '\n\t\t\t\t'.join(new_settings))
           
           with open(proj_path, 'w') as f:
               f.write(proj)
           
           print('SUCCESS: Project file manually hardcoded for signing.')
-          "
+          EOF
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
