@@ -24,12 +24,19 @@ workflows:
         script: |
           keychain initialize
           
-          # Debug: Mevcut identifier'ları listele
+          # Mevcut identifier'ları listele (Loglarda gözüksün diye)
           app-store-connect list-bundle-ids
           
-          # Fetch/Create certificates and profiles
+          # Sertifika ve Profilleri temizle/çek/oluştur
+          # Hem developer hem distribution sertifikalarını çekiyoruz
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_DEVELOPMENT --create
+          
           keychain add-certificates
+          
+          # Xcode'un profilleri tanıması için profil adlarını projenin içine işlemesi gerekir
+          # Ama biz burada automatic signing kullanıyoruz, Codemagic bunu halletmeli.
+          # Ekstra güvenlik önlemi:
           xcode-project use-profiles --bundle-id "$BUNDLE_ID"
       - name: Set versioning
         script: |
