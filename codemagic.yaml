@@ -23,21 +23,10 @@ workflows:
       - name: Set up code signing
         script: |
           keychain initialize
-          
-          # Mevcut identifier'ları listele (Loglarda gözüksün diye)
-          app-store-connect list-bundle-ids
-          
-          # Sertifika ve Profilleri temizle/çek/oluştur
-          # Hem developer hem distribution sertifikalarını çekiyoruz
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_DEVELOPMENT --create
-          
+          # Codemagic will automatically handle the profile and certificate fetching
+          # because we defined ios_signing in the environment block.
+          # Here we just make sure they are added to the keychain.
           keychain add-certificates
-          
-          # Xcode'un profilleri tanıması için profil adlarını projenin içine işlemesi gerekir
-          # Ama biz burada automatic signing kullanıyoruz, Codemagic bunu halletmeli.
-          # Ekstra güvenlik önlemi:
-          xcode-project use-profiles --bundle-id "$BUNDLE_ID"
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
@@ -51,11 +40,12 @@ workflows:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
       - name: Build IPA
         script: |
+          # Flutter build ios ensures the project is ready
           flutter build ios --release --no-codesign
+          # xcode-project build-ipa will use the profile provided by ios_signing
           xcode-project build-ipa \
             --workspace ios/Runner.xcworkspace \
-            --scheme Runner \
-            --bundle-id "$BUNDLE_ID"
+            --scheme Runner
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
