@@ -24,7 +24,7 @@ workflows:
           app-store-connect list-certificates || echo "Could not list certificates"
           
           echo "Listing available Bundle IDs..."
-          app-store-connect list-bundle-ids || echo "Could not list bundle IDs"
+          app-store-connect bundle-ids list || echo "Could not list bundle IDs"
           
           # Fetch/Create certificates and profiles
           echo "Fetching signing files for $BUNDLE_ID..."
@@ -33,17 +33,13 @@ workflows:
           keychain add-certificates
           
           echo "Checking downloaded profiles folder..."
-          DOWNLOADED_PROFILES=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/)
-          if [ -z "$DOWNLOADED_PROFILES" ]; then
-            echo "ERROR: No profiles were downloaded!"
-          else
-            echo "Downloaded profiles:"
-            echo "$DOWNLOADED_PROFILES"
-          fi
+          ls ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "No profiles found!"
+          
           echo "--- DIAGNOSTICS END ---"
           
           # Apply profiles to the project
-          xcode-project use-profiles --bundle-id "$BUNDLE_ID"
+          # Not: 'use-profiles' komutu argüman almazsa tüm indirilenleri eşleştirir.
+          xcode-project use-profiles
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
