@@ -20,14 +20,17 @@ workflows:
           keychain initialize
           
           echo "--- DIAGNOSTICS START ---"
-          echo "Listing available Certificates..."
-          app-store-connect list-certificates || echo "Could not list certificates"
+          echo "Listing available Certificates on Apple Portal..."
+          app-store-connect certificates list || echo "Could not list certificates"
+          
+          echo "Listing available Provisioning Profiles on Apple Portal..."
+          app-store-connect profiles list || echo "Could not list profiles"
           
           echo "Listing available Bundle IDs..."
           app-store-connect bundle-ids list || echo "Could not list bundle IDs"
           
           # Fetch/Create certificates and profiles
-          echo "Fetching signing files for $BUNDLE_ID..."
+          echo "Fetching/Creating signing files for $BUNDLE_ID..."
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           
           keychain add-certificates
