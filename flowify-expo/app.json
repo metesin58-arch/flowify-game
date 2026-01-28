@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Flowify",
+    "slug": "flowify",
+    "version": "3.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.metestudios.flowifygame",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.metestudios.flowifygame",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-av",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-4965929442860631~8109023834",
+          "iosAppId": "ca-app-pub-4965929442860631~8109023834"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "01f329cc-4209-484b-8b01-9c2f4c158501"
+      }
+    }
+  }
+}

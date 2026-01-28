@@ -13,7 +13,6 @@ workflows:
       cocoapods: default
       vars:
         BUNDLE_ID: "com.metestudios.flowify2"
-        XCODE_COMMAND: "xcode-project build-ipa --workspace ios/Runner.xcworkspace --scheme Runner --bundle-id $BUNDLE_ID"
     scripts:
       - name: Install dependencies
         script: |
@@ -24,12 +23,11 @@ workflows:
       - name: Set up code signing
         script: |
           keychain initialize
+          # Bu komut hem sertifikaları hem de profilleri Apple Portal'dan çeker/oluşturur.
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           keychain add-certificates
       - name: Set versioning
         script: |
-          # CFBundleShortVersionString: 1.0.0
-          # CFBundleVersion: Greater than previous build
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
           if [ -z "$LATEST_BUILD" ] || [ "$LATEST_BUILD" == "null" ]; then
             BUILD_NUMBER=1
@@ -37,13 +35,15 @@ workflows:
             BUILD_NUMBER=$((LATEST_BUILD + 1))
           fi
           echo "Target Build Number: $BUILD_NUMBER"
-          
-          # Apply to Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.0" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
       - name: Build IPA
         script: |
-          $XCODE_COMMAND
+          flutter build ios --release --no-codesign
+          xcode-project build-ipa \
+            --workspace ios/Runner.xcworkspace \
+            --scheme Runner \
+            --bundle-id "$BUNDLE_ID"
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
