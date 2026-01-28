@@ -23,10 +23,13 @@ workflows:
       - name: Set up code signing
         script: |
           keychain initialize
+          
+          # Debug: Mevcut identifier'ları listele
+          app-store-connect list-bundle-ids
+          
           # Fetch/Create certificates and profiles
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           keychain add-certificates
-          # Xcode'un profilleri tanıması için bu komut kritik
           xcode-project use-profiles --bundle-id "$BUNDLE_ID"
       - name: Set versioning
         script: |
