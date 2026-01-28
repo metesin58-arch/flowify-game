@@ -9,6 +9,7 @@ workflows:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.metestudios.flowify2
+        team_id: ERUH5NNQUB
       xcode: latest
       cocoapods: default
       vars:
@@ -24,34 +25,18 @@ workflows:
         script: |
           keychain initialize
           
-          # 1. Fetch profiles and certificates (Force create if missing)
+          # Force fetch/create both App Store and Development profiles
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_DEVELOPMENT --create
+          
           keychain add-certificates
           
-          # 2. Extract the Profile Name from the downloaded file
-          # Bu kısım Xcode'un "No matching profiles" hatasını zorla aşar.
-          PROV_PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
-          PROV_PROFILE_NAME=$(grep -aA1 "Name" "$PROV_PROFILE_PATH" | grep string | sed -E 's/.*<string>(.*)<\/string>.*/\1/' | head -1)
-          echo "Target Profile Name: $PROV_PROFILE_NAME"
+          # Debug: Profil indirildi mi kontrol et
+          echo "Checking downloaded profiles..."
+          ls ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "No profiles found!"
           
-          # 3. Inject this name directly into the project file
-          export PROV_PROFILE_NAME="$PROV_PROFILE_NAME"
-          python3 -c "
-          import os, re
-          path = 'ios/Runner.xcodeproj/project.pbxproj'
-          name = os.environ.get('PROV_PROFILE_NAME')
-          if not os.path.exists(path): 
-              print('Project path not found')
-              exit(1)
-          with open(path, 'r') as f: content = f.read()
-          # Force PROVISIONING_PROFILE_SPECIFIER to match the downloaded profile
-          if 'PROVISIONING_PROFILE_SPECIFIER' in content:
-              content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;', f'PROVISIONING_PROFILE_SPECIFIER = \"{name}\";', content)
-          else:
-              content = content.replace('buildSettings = {', f'buildSettings = {{\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"{name}\";')
-          with open(path, 'w') as f: f.write(content)
-          print(f'Successfully injected {name} into {path}')
-          "
+          # Xcode projesindeki signing ayarlarını zorla Manual yap ve profili eşleştir
+          xcode-project use-profiles --bundle-id "$BUNDLE_ID"
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
