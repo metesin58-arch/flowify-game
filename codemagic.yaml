@@ -19,18 +19,15 @@ workflows:
         script: |
           keychain initialize
           
-          # 1. Taze bir Apple Distribution sertifikası yarat ve kaydet
-          echo "Creating new Apple Distribution certificate..."
-          app-store-connect certificates create --type DISTRIBUTION --save || echo "Cert creation failed, but continuing..."
+          # 1. Temizlik ve Taze Başlangıç
+          rm -rf ~/Library/MobileDevice/Provisioning\ Profiles/*
           
-          # 2. Bundle ID için yeni bir App Store profili yarat
-          # Not: Eğer profil zaten varsa 'create' hata verebilir, o yüzden get/create mantığıyla ilerliyoruz
-          echo "Creating Provisioning Profile for $BUNDLE_ID..."
-          app-store-connect profiles create --name "Flowify CI Profile" --bundle-id "$BUNDLE_ID" --type IOS_APP_STORE || echo "Profile creation failed"
+          # 2. Sertifika ve Profil Al (Otomatik Yaratma Modu)
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           
           keychain add-certificates
           
-          # 3. MANUEL INJECTION (Zorla eşleştirme)
+          # 3. NÜKLEER ENJEKSİYON (Projenin her yerini imzalıyoruz)
           python3 -c "
           import os, re, glob
           
@@ -47,24 +44,28 @@ workflows:
                   with open(proj_path, 'r') as f:
                       proj_content = f.read()
                   
-                  new_settings = [
+                  # TÜM buildSettings bloklarına Apple Distribution ayarlarını göm
+                  settings_to_inject = [
                       f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";',
+                      'DEVELOPMENT_TEAM = ERUH5NNQUB;',
                       'CODE_SIGN_STYLE = Manual;',
                       'CODE_SIGN_IDENTITY = \"Apple Distribution\";',
                       '\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";'
                   ]
+                  
+                  # Temizlik: Eski çakışan ayarları sil
+                  proj_content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', '', proj_content)
+                  proj_content = re.sub(r'CODE_SIGN_IDENTITY = [^;]+;', '', proj_content)
+                  
+                  # Enjeksiyon
                   def inject(match):
-                      return match.group(0) + '\n\t\t\t\t' + '\n\t\t\t\t'.join(new_settings)
+                      return match.group(0) + '\n\t\t\t\t' + '\n\t\t\t\t'.join(settings_to_inject)
                   
                   final_content = re.sub(r'buildSettings = \{', inject, proj_content)
                   with open(proj_path, 'w') as f:
                       f.write(final_content)
-                  print(f'Project updated with: {profile_name}')
-          else:
-              print('No mobileprovision found to inject, will try standard xcode-project tool')
+                  print(f'GLOBAL INJECTION SUCCESS: {profile_name}')
           "
-          
-          # 4. Standart eşleştirmeyi de ek olarak dene
           xcode-project use-profiles
       - name: Set versioning
         script: |
