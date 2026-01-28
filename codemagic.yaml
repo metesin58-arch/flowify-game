@@ -1,66 +1,51 @@
 workflows:
   ios-native:
-    name: iOS Native Premium Build (Dynamic Injection)
+    name: Flowify2026 iOS Build & TestFlight
     instance_type: mac_mini_m2
     max_build_duration: 30
     integrations:
-      app_store_connect: Zeal
+      app_store_connect: Rap
     environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.metestudios.flowify2
       xcode: latest
       cocoapods: default
       vars:
-        BUNDLE_ID: "com.metestudios.flowifyzero" 
-        XCODE_SCHEME: "Runner"
+        BUNDLE_ID: "com.metestudios.flowify2"
+        XCODE_COMMAND: "xcode-project build-ipa --workspace ios/Runner.xcworkspace --scheme Runner --bundle-id $BUNDLE_ID"
     scripts:
-      - name: Set up code signing & Inject Profile
+      - name: Install dependencies
+        script: |
+          flutter packages pub get
+      - name: Install Pods
+        script: |
+          cd ios && pod install
+      - name: Set up code signing
         script: |
           keychain initialize
-          
-          # 1. Fetch profiles and certificates
           app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           keychain add-certificates
+      - name: Set versioning
+        script: |
+          # CFBundleShortVersionString: 1.0.0
+          # CFBundleVersion: Greater than previous build
+          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
+          if [ -z "$LATEST_BUILD" ] || [ "$LATEST_BUILD" == "null" ]; then
+            BUILD_NUMBER=1
+          else
+            BUILD_NUMBER=$((LATEST_BUILD + 1))
+          fi
+          echo "Target Build Number: $BUILD_NUMBER"
           
-          # 2. Extract the Profile Name from the downloaded file
-          PROV_PROFILE_PATH=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
-          PROV_PROFILE_NAME=$(grep -aA1 "Name" "$PROV_PROFILE_PATH" | grep string | sed -E 's/.*<string>(.*)<\/string>.*/\1/' | head -1)
-          echo "Target Profile Name: $PROV_PROFILE_NAME"
-          
-          # 3. Inject this name directly into the project file
-          export PROV_PROFILE_NAME="$PROV_PROFILE_NAME"
-          python3 -c "
-          import os, re
-          path = 'ios/Runner.xcodeproj/project.pbxproj'
-          name = os.environ.get('PROV_PROFILE_NAME')
-          if not os.path.exists(path): 
-              print('Project path not found')
-              exit(1)
-          with open(path, 'r') as f: content = f.read()
-          # Update or add PROVISIONING_PROFILE_SPECIFIER for all build configurations
-          if 'PROVISIONING_PROFILE_SPECIFIER' in content:
-              content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]*;', f'PROVISIONING_PROFILE_SPECIFIER = \"{name}\";', content)
-          else:
-              content = content.replace('buildSettings = {', f'buildSettings = {{\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"{name}\";')
-          with open(path, 'w') as f: f.write(content)
-          print(f'Successfully injected {name} into {path}')
-          "
-      
+          # Apply to Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.0" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
       - name: Build IPA
         script: |
-          # Fetch latest build number
-          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
-          BUILD_NUMBER=$((LATEST_BUILD + 1))
-          
-          # Set version
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
-          
-          # Official build command
-          xcode-project build-ipa \
-            --workspace ios/Runner.xcworkspace \
-            --scheme "$XCODE_SCHEME"
-    
+          $XCODE_COMMAND
     artifacts:
       - build/ios/ipa/*.ipa
-    
     publishing:
       app_store_connect:
         auth: integration
