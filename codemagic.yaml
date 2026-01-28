@@ -41,8 +41,8 @@ workflows:
           echo "--- DIAGNOSTICS END ---"
           
           # Apply profiles to the project
-          # 1. Standart komutu dene (Tipini açıkça belirtiyoruz)
-          xcode-project use-profiles --type ios_app_store
+          # 1. Standart komutu dene
+          xcode-project use-profiles
           
           # 2. MANUEL INJECTION (Zorla eşleştirme)
           python3 -c "
