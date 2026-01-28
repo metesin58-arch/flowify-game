@@ -42,43 +42,62 @@ workflows:
           xcode-project use-profiles
           
           # 2. MANUEL INJECTION (Zorla eşleştirme)
-          # Eğer use-profiles başarısız olursa, projenin içine profil ismini biz yazıyoruz.
           python3 -c "
           import os, re, glob
-          from pathlib import Path
           
-          # Profili bul
-          profile_path = glob.glob(os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision'))
-          if not profile_path:
-              print('No profile found to inject')
-              exit(0)
+          # 1. Profili bul
+          profile_pattern = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision')
+          profiles = glob.glob(profile_pattern)
+          if not profiles:
+              print('ERROR: No .mobileprovision files found!')
+              exit(1)
           
-          # Profil ismini oku
-          with open(profile_path[0], 'rb') as f:
+          # 2. Profil ismini ve Team ID'yi oku
+          with open(profiles[0], 'rb') as f:
               content = f.read().decode('latin-1')
-              match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
-              if not match:
-                  print('Could not extract profile name')
-                  exit(0)
-              profile_name = match.group(1)
-              print(f'Injecting Profile Name: {profile_name}')
-          
-          # Projeye yaz
+              name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
+              team_match = re.search(r'<key>TeamIdentifier</key>\s*<array>\s*<string>([^<]+)</string>', content)
+              
+              if not name_match:
+                  print('ERROR: Could not find Name in profile')
+                  exit(1)
+              
+              profile_name = name_match.group(1)
+              team_id = team_match.group(1) if team_match else 'ERUH5NNQUB'
+              
+              print(f'Detected Profile: {profile_name}')
+              print(f'Detected Team ID: {team_id}')
+
+          # 3. project.pbxproj dosyasını güncelle
           proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(proj_path, 'r') as f:
               proj_content = f.read()
+
+          # Temizlik: Eski ayarları sil
+          proj_content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', '', proj_content)
+          proj_content = re.sub(r'CODE_SIGN_STYLE = [^;]+;', '', proj_content)
+          proj_content = re.sub(r'DEVELOPMENT_TEAM = [^;]+;', '', proj_content)
+          proj_content = re.sub(r'\"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]\" = [^;]+;', '', proj_content)
+          proj_content = re.sub(r'CODE_SIGN_IDENTITY = [^;]+;', '', proj_content)
           
-          # PROVISIONING_PROFILE_SPECIFIER ekle/güncelle
-          if 'PROVISIONING_PROFILE_SPECIFIER' in proj_content:
-              new_content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = \".*\";', f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";', proj_content)
-              new_content = re.sub(r'PROVISIONING_PROFILE_SPECIFIER = [^;]+;', f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";', new_content)
-          else:
-              # buildSettings bloğuna ekle
-              new_content = proj_content.replace('buildSettings = {', f'buildSettings = {{\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";')
+          # Yeni ayarları tüm buildSettings bloklarına enjekte et
+          new_settings = [
+              f'PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";',
+              f'DEVELOPMENT_TEAM = {team_id};',
+              'CODE_SIGN_STYLE = Manual;',
+              'CODE_SIGN_IDENTITY = \"Apple Distribution\";',
+              '\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";'
+          ]
+          
+          def inject(match):
+              return match.group(0) + '\n\t\t\t\t' + '\n\t\t\t\t'.join(new_settings)
+
+          final_content = re.sub(r'buildSettings = \{', inject, proj_content)
           
           with open(proj_path, 'w') as f:
-              f.write(new_content)
-          print('Successfully injected PROVISIONING_PROFILE_SPECIFIER')
+              f.write(final_content)
+          
+          print('Successfully injected signing values into ALL buildSettings blocks!')
           "
       - name: Set versioning
         script: |
