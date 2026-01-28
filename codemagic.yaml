@@ -29,12 +29,13 @@ workflows:
           echo "Listing available Bundle IDs..."
           app-store-connect bundle-ids list || echo "Could not list bundle IDs"
           
-          # Fetch/Create certificates and profiles (Separated to avoid private key issues)
-          echo "Explicitly creating/fetching Apple Distribution certificates..."
-          app-store-connect certificates create --type DISTRIBUTION --save || echo "Certificate already exists or could not be created"
+          # Cleanup old files
+          rm -rf ~/Library/MobileDevice/Provisioning\ Profiles/*
+          rm -rf ~/Library/MobileDevice/Certificates/*
           
-          echo "Fetching/Creating provisioning profiles for $BUNDLE_ID..."
-          app-store-connect profiles fetch "$BUNDLE_ID" --type IOS_APP_STORE --create
+          # Fetch/Create certificates and profiles
+          echo "Fetching/Creating signing files for $BUNDLE_ID..."
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
           
           keychain add-certificates
           
