@@ -22,8 +22,23 @@ workflows:
       - name: Set up code signing
         script: |
           keychain initialize
+          
+          # 1. Ensure distribution certificate exists (create if missing)
+          app-store-connect certificates list --type IOS_DISTRIBUTION || true
+          app-store-connect create-certificate --type IOS_DISTRIBUTION --save || echo "Certificate already exists or was created"
+          
+          # 2. Register bundle ID if not exists
+          app-store-connect bundle-ids list --bundle-id-identifier "com.metestudios.flowify2" || \
+            app-store-connect bundle-ids create --identifier "com.metestudios.flowify2" --name "Flowify2" --platform IOS || \
+            echo "Bundle ID already registered"
+          
+          # 3. Fetch or create provisioning profile
           app-store-connect fetch-signing-files "com.metestudios.flowify2" \
-            --type IOS_APP_STORE --create
+            --type IOS_APP_STORE \
+            --create \
+            --verbose
+          
+          # 4. Apply to keychain and project
           keychain add-certificates
           xcode-project use-profiles
       - name: Set versioning
