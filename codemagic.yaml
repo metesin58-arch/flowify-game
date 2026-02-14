@@ -18,33 +18,99 @@ workflows:
       - name: Install CocoaPods
         script: |
           cd ios && pod install
-      - name: Debug - List available certs and profiles
-        script: |
-          echo "=== Listing certificates ==="
-          app-store-connect certificates list || echo "No certificates found"
-          echo ""
-          echo "=== Listing bundle IDs ==="
-          app-store-connect bundle-ids list || echo "No bundle IDs found"
-          echo ""
-          echo "=== Listing profiles ==="
-          app-store-connect profiles list || echo "No profiles found"
-      - name: Create certificate if needed
-        script: |
-          app-store-connect create-certificate \
-            --type IOS_DISTRIBUTION \
-            --save \
-            || echo "Certificate creation skipped (may already exist)"
-      - name: Fetch signing files
+      - name: Set up code signing
         script: |
           keychain initialize
           
+          # Create certificate if needed
+          app-store-connect create-certificate \
+            --type IOS_DISTRIBUTION \
+            --save || echo "Certificate exists"
+          
+          # Fetch signing files
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
-            --create \
-            --verbose
+            --create
           
           keychain add-certificates
-          xcode-project use-profiles
+      - name: Apply signing to Xcode project
+        script: |
+          # Manually inject provisioning profile into project.pbxproj
+          python3 <<'EOF'
+          import os, re, glob, subprocess
+
+          profile_pattern = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision')
+          profiles = glob.glob(profile_pattern)
+          if not profiles:
+              print('ERROR: No mobileprovision found!')
+              exit(1)
+
+          profile_path = profiles[0]
+          print(f'Found profile: {profile_path}')
+
+          # Extract UUID
+          try:
+              uuid = subprocess.check_output(
+                  f"grep -aA1 'UUID' '{profile_path}' | grep -oE '[a-f0-9]{{8}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{12}}'",
+                  shell=True
+              ).decode().strip()
+          except:
+              uuid = "NOT_FOUND"
+
+          # Extract profile name
+          with open(profile_path, 'rb') as f:
+              content = f.read().decode('latin-1')
+              name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
+              profile_name = name_match.group(1) if name_match else "Unknown"
+
+          # Extract team ID
+          team_match = re.search(r'<key>TeamIdentifier</key>\s*<array>\s*<string>([^<]+)</string>', content)
+          team_id = team_match.group(1) if team_match else "ERUH5NNQUB"
+
+          # Extract signing identity
+          try:
+              identity = subprocess.check_output(
+                  "security find-identity -v -p codesigning | grep 'Apple Distribution' | head -1 | sed 's/.*\"\\(.*\\)\"/\\1/'",
+                  shell=True
+              ).decode().strip()
+          except:
+              identity = "Apple Distribution"
+
+          print(f'Profile Name: {profile_name}')
+          print(f'Profile UUID: {uuid}')
+          print(f'Team ID: {team_id}')
+          print(f'Identity: {identity}')
+
+          proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
+          if not os.path.exists(proj_path):
+              print('ERROR: project.pbxproj not found!')
+              exit(1)
+
+          with open(proj_path, 'r') as f:
+              proj = f.read()
+
+          # Clean old signing settings
+          for key in ['PROVISIONING_PROFILE =', 'PROVISIONING_PROFILE_SPECIFIER =', 'CODE_SIGN_IDENTITY =',
+                      '"CODE_SIGN_IDENTITY\\[sdk=iphoneos\\*\\]"', 'CODE_SIGN_STYLE =']:
+              proj = re.sub(f'\\s*{key}[^;]*;', '', proj)
+
+          # Inject new signing settings into every buildSettings block
+          new_settings = '\n'.join([
+              f'\t\t\t\tPROVISIONING_PROFILE = "{uuid}";',
+              f'\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "{profile_name}";',
+              f'\t\t\t\tDEVELOPMENT_TEAM = {team_id};',
+              '\t\t\t\tCODE_SIGN_STYLE = Manual;',
+              f'\t\t\t\tCODE_SIGN_IDENTITY = "{identity}";',
+              f'\t\t\t\t"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "{identity}";',
+          ])
+
+          proj = proj.replace('buildSettings = {', 'buildSettings = {\n' + new_settings)
+
+          with open(proj_path, 'w') as f:
+              f.write(proj)
+
+          print('SUCCESS: Signing settings injected into project.pbxproj')
+          EOF
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
