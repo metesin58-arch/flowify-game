@@ -1,8 +1,8 @@
 workflows:
-  ios-native:
-    name: Flowify2026 iOS Build & TestFlight
+  ios-release:
+    name: Flowify iOS Release
     instance_type: mac_mini_m2
-    max_build_duration: 30
+    max_build_duration: 60
     integrations:
       app_store_connect: Flowify2026
     environment:
@@ -12,93 +12,36 @@ workflows:
       xcode: latest
       flutter: stable
       cocoapods: default
-      vars:
-        BUNDLE_ID: "com.metestudios.flowify2"
     scripts:
-      - name: Install dependencies
+      - name: Install Flutter dependencies
         script: |
-          flutter packages pub get
+          flutter pub get
+      - name: Install CocoaPods
+        script: |
+          cd ios && pod install
       - name: Set up code signing
         script: |
           keychain initialize
-          
-          # 1. Cleanup and Fresh Fetch
-          rm -rf ~/Library/MobileDevice/Provisioning\ Profiles/*
-          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create || echo "Fetch failed, checking manual injection..."
-          
+          app-store-connect fetch-signing-files "com.metestudios.flowify2" \
+            --type IOS_APP_STORE --create
           keychain add-certificates
-          
-          # 2. MANUEL ENJEKSİYON (UUID + NAME + IDENTITY) - EOF kullanarak yazıyoruz (Hata payı yok)
-          python3 <<'EOF'
-          import os, re, glob, subprocess
-          
-          profile_pattern = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision')
-          profiles = glob.glob(profile_pattern)
-          if not profiles:
-              print('ERROR: No mobileprovision found!')
-              exit(0)
-          
-          profile_path = profiles[0]
-          # UUID extraction
-          try:
-              uuid = subprocess.check_output(f"grep -aA1 'UUID' '{profile_path}' | grep -oE '[a-f0-9]{{8}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{12}}'", shell=True).decode().strip()
-          except:
-              uuid = "NOT_FOUND"
-
-          with open(profile_path, 'rb') as f:
-              content = f.read().decode('latin-1')
-              name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
-              profile_name = name_match.group(1) if name_match else "Unknown"
-
-          print(f'Detected Profile: {profile_name} (UUID: {uuid})')
-
-          proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
-          if not os.path.exists(proj_path):
-              exit(1)
-
-          with open(proj_path, 'r') as f:
-              proj = f.read()
-
-          # Sadece Runner target'ına ait buildSettings bloklarını bul ve güncelle
-          # Bu yöntem en güvenli manuel kodlamadır
-          new_settings = [
-              f'PROVISIONING_PROFILE = "{uuid}";',
-              f'PROVISIONING_PROFILE_SPECIFIER = "{profile_name}";',
-              'DEVELOPMENT_TEAM = ERUH5NNQUB;',
-              'CODE_SIGN_STYLE = Manual;',
-              'CODE_SIGN_IDENTITY = "Apple Distribution";',
-              '"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";'
-          ]
-
-          # Eski ayarları temizle
-          for key in ['PROVISIONING_PROFILE', 'PROVISIONING_PROFILE_SPECIFIER', 'CODE_SIGN_IDENTITY', 'CODE_SIGN_STYLE']:
-              proj = re.sub(f'{key} = [^;]+;', '', proj)
-
-          # Yeni ayarları enjekte et
-          proj = proj.replace('buildSettings = {', 'buildSettings = {\n\t\t\t\t' + '\n\t\t\t\t'.join(new_settings))
-          
-          with open(proj_path, 'w') as f:
-              f.write(proj)
-          
-          print('SUCCESS: Project file manually hardcoded for signing.')
-          EOF
+          xcode-project use-profiles
       - name: Set versioning
         script: |
-          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID")
+          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "com.metestudios.flowify2" || echo "0")
           if [ -z "$LATEST_BUILD" ] || [ "$LATEST_BUILD" == "null" ]; then
             BUILD_NUMBER=1
           else
             BUILD_NUMBER=$((LATEST_BUILD + 1))
           fi
-          echo "Target Build Number: $BUILD_NUMBER"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.0" ios/Runner/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
+          echo "Build Number: $BUILD_NUMBER"
+          cd ios
+          agvtool new-version -all $BUILD_NUMBER
+          agvtool new-marketing-version 1.0.0
       - name: Build IPA
         script: |
-          flutter build ios --release --no-codesign
-          xcode-project build-ipa \
-            --workspace ios/Runner.xcworkspace \
-            --scheme Runner
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
