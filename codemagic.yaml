@@ -24,13 +24,15 @@ workflows:
           
           # Generate a new RSA private key for certificate creation
           openssl genrsa -out /tmp/cert_private_key.pem 2048
-          echo "Private key generated at /tmp/cert_private_key.pem"
           
-          # Fetch signing files with the private key (creates cert + profile)
+          # Export as env var (Codemagic CLI checks this)
+          export CERTIFICATE_PRIVATE_KEY="$(cat /tmp/cert_private_key.pem)"
+          
+          # Fetch signing files with the private key content
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create \
-            --certificate-key /tmp/cert_private_key.pem
+            --certificate-key "$(cat /tmp/cert_private_key.pem)"
           
           keychain add-certificates
       - name: Apply signing to Xcode project
