@@ -11,6 +11,8 @@ workflows:
       cocoapods: default
       vars:
         BUNDLE_ID: "com.metestudios.flowify2"
+        PROFILES_DIR: "/tmp/cm_profiles"
+        CERTS_DIR: "/tmp/cm_certs"
     scripts:
       - name: Install Flutter dependencies
         script: |
@@ -18,14 +20,8 @@ workflows:
       - name: Install CocoaPods
         script: |
           cd ios && pod install
-      - name: Set up code signing
+      - name: Revoke old certificates
         script: |
-          keychain initialize
-          
-          # Generate a new RSA private key
-          openssl genrsa -out /tmp/cert_private_key.pem 2048
-          
-          # Revoke existing iOS Distribution certificates (key mismatch fix)
           python3 -c "
           import subprocess, json
           try:
@@ -36,44 +32,64 @@ workflows:
                   if cid:
                       subprocess.run(['app-store-connect', 'certificates', 'delete', cid], timeout=30)
                       print(f'Revoked: {cid}')
-              if not certs: print('No existing certs')
-          except Exception as e: print(f'Cert cleanup: {e}')
+              if not certs: print('No existing certs to revoke')
+          except Exception as e: print(f'Note: {e}')
           " || true
+      - name: Set up code signing
+        script: |
+          keychain initialize
           
-          # Fetch signing files (creates new cert + profile)
+          # Generate RSA private key
+          openssl genrsa -out /tmp/cert_private_key.pem 2048
+          
+          # Create directories
+          mkdir -p "$PROFILES_DIR" "$CERTS_DIR"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          
+          # Fetch signing files to explicit directories
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create \
-            --certificate-key "$(cat /tmp/cert_private_key.pem)"
+            --certificate-key "$(cat /tmp/cert_private_key.pem)" \
+            --profiles-dir "$PROFILES_DIR" \
+            --certificates-dir "$CERTS_DIR" \
+            -v
           
-          keychain add-certificates
+          # Show what was downloaded
+          echo "=== Downloaded profiles ==="
+          ls -la "$PROFILES_DIR"/ 2>/dev/null || echo "Empty"
+          echo "=== Downloaded certs ==="
+          ls -la "$CERTS_DIR"/ 2>/dev/null || echo "Empty"
           
-          # Show where profiles are saved
-          echo "=== Profiles ==="
-          find ~/Library/MobileDevice -name "*.mobileprovision" -maxdepth 3 2>/dev/null || echo "None in MobileDevice"
-          ls -la /Users/builder/clone/*.mobileprovision 2>/dev/null || echo "None in clone"
+          # Copy profiles to Xcode standard location
+          cp -v "$PROFILES_DIR"/*.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null || echo "No profiles to copy"
+          
+          # Add certificates to keychain
+          keychain add-certificates --certificates-dir "$CERTS_DIR"
       - name: Apply signing to Xcode project
         script: |
           python3 <<'EOF'
-          import os, re, glob, subprocess
+          import os, re, subprocess
           
-          # Search ONLY specific known locations (no recursive glob!)
-          locations = [
-              os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles'),
-              '/Users/builder/clone',
-              '/tmp',
-          ]
+          PROFILES_DIR = os.environ.get('PROFILES_DIR', '/tmp/cm_profiles')
+          XCODE_DIR = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles')
           
+          # Find profile in our known directories
           profiles = []
-          for loc in locations:
-              if os.path.isdir(loc):
-                  for f in os.listdir(loc):
+          for d in [PROFILES_DIR, XCODE_DIR]:
+              if os.path.isdir(d):
+                  for f in os.listdir(d):
                       if f.endswith('.mobileprovision'):
-                          profiles.append(os.path.join(loc, f))
+                          profiles.append(os.path.join(d, f))
           
           if not profiles:
-              print('ERROR: No mobileprovision found!')
-              print('Searched:', locations)
+              print(f'ERROR: No mobileprovision in {PROFILES_DIR} or {XCODE_DIR}')
+              # Debug: list contents of both dirs
+              for d in [PROFILES_DIR, XCODE_DIR]:
+                  if os.path.isdir(d):
+                      print(f'{d}: {os.listdir(d)}')
+                  else:
+                      print(f'{d}: does not exist')
               exit(1)
           
           profile_path = profiles[0]
@@ -88,35 +104,20 @@ workflows:
           except:
               uuid = "NOT_FOUND"
           
-          # Extract profile name
           with open(profile_path, 'rb') as f:
               content = f.read().decode('latin-1')
               name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
               profile_name = name_match.group(1) if name_match else "Unknown"
           
-          # Get signing identity
           try:
-              out = subprocess.check_output(
-                  "security find-identity -v -p codesigning", shell=True
-              ).decode()
+              out = subprocess.check_output("security find-identity -v -p codesigning", shell=True).decode()
               m = re.search(r'"([^"]*Distribution[^"]*)"', out)
               identity = m.group(1) if m else "Apple Distribution"
           except:
               identity = "Apple Distribution"
           
-          print(f'UUID: {uuid}')
-          print(f'Name: {profile_name}')
-          print(f'Identity: {identity}')
+          print(f'UUID: {uuid} | Name: {profile_name} | Identity: {identity}')
           
-          # Copy profile to Xcode location
-          xcode_dir = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles')
-          os.makedirs(xcode_dir, exist_ok=True)
-          dest = os.path.join(xcode_dir, f'{uuid}.mobileprovision')
-          if not os.path.exists(dest):
-              import shutil
-              shutil.copy2(profile_path, dest)
-          
-          # Inject into project.pbxproj
           proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(proj_path, 'r') as f:
               proj = f.read()
@@ -134,12 +135,10 @@ workflows:
               f'\t\t\t\tCODE_SIGN_IDENTITY = "{identity}";',
               f'\t\t\t\t"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "{identity}";',
           ])
-          
           proj = proj.replace('buildSettings = {', 'buildSettings = {\n' + new_settings)
           
           with open(proj_path, 'w') as f:
               f.write(proj)
-          
           print('SUCCESS: Signing injected')
           EOF
       - name: Set versioning
