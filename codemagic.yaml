@@ -22,12 +22,7 @@ workflows:
         script: |
           keychain initialize
           
-          # Create certificate if needed
-          app-store-connect create-certificate \
-            --type IOS_DISTRIBUTION \
-            --save || echo "Certificate exists"
-          
-          # Fetch signing files
+          # Fetch signing files (creates certificate + profile since old ones were revoked)
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
