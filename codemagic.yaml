@@ -6,12 +6,11 @@ workflows:
     integrations:
       app_store_connect: Flowify2026
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.metestudios.flowify2
       xcode: latest
       flutter: stable
       cocoapods: default
+      vars:
+        BUNDLE_ID: "com.metestudios.flowify2"
     scripts:
       - name: Install Flutter dependencies
         script: |
@@ -19,31 +18,36 @@ workflows:
       - name: Install CocoaPods
         script: |
           cd ios && pod install
-      - name: Set up code signing
+      - name: Debug - List available certs and profiles
+        script: |
+          echo "=== Listing certificates ==="
+          app-store-connect certificates list || echo "No certificates found"
+          echo ""
+          echo "=== Listing bundle IDs ==="
+          app-store-connect bundle-ids list || echo "No bundle IDs found"
+          echo ""
+          echo "=== Listing profiles ==="
+          app-store-connect profiles list || echo "No profiles found"
+      - name: Create certificate if needed
+        script: |
+          app-store-connect create-certificate \
+            --type IOS_DISTRIBUTION \
+            --save \
+            || echo "Certificate creation skipped (may already exist)"
+      - name: Fetch signing files
         script: |
           keychain initialize
           
-          # 1. Ensure distribution certificate exists (create if missing)
-          app-store-connect certificates list --type IOS_DISTRIBUTION || true
-          app-store-connect create-certificate --type IOS_DISTRIBUTION --save || echo "Certificate already exists or was created"
-          
-          # 2. Register bundle ID if not exists
-          app-store-connect bundle-ids list --bundle-id-identifier "com.metestudios.flowify2" || \
-            app-store-connect bundle-ids create --identifier "com.metestudios.flowify2" --name "Flowify2" --platform IOS || \
-            echo "Bundle ID already registered"
-          
-          # 3. Fetch or create provisioning profile
-          app-store-connect fetch-signing-files "com.metestudios.flowify2" \
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create \
             --verbose
           
-          # 4. Apply to keychain and project
           keychain add-certificates
           xcode-project use-profiles
       - name: Set versioning
         script: |
-          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "com.metestudios.flowify2" || echo "0")
+          LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
           if [ -z "$LATEST_BUILD" ] || [ "$LATEST_BUILD" == "null" ]; then
             BUILD_NUMBER=1
           else
@@ -53,10 +57,14 @@ workflows:
           cd ios
           agvtool new-version -all $BUILD_NUMBER
           agvtool new-marketing-version 1.0.0
-      - name: Build IPA
+      - name: Build Flutter iOS (no codesign)
         script: |
-          flutter build ipa --release \
-            --export-options-plist=/Users/builder/export_options.plist
+          flutter build ios --release --no-codesign
+      - name: Build IPA with signing
+        script: |
+          xcode-project build-ipa \
+            --workspace ios/Runner.xcworkspace \
+            --scheme Runner
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
