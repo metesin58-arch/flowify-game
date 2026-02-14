@@ -22,10 +22,15 @@ workflows:
         script: |
           keychain initialize
           
-          # Fetch signing files (creates certificate + profile since old ones were revoked)
+          # Generate a new RSA private key for certificate creation
+          openssl genrsa -out /tmp/cert_private_key.pem 2048
+          echo "Private key generated at /tmp/cert_private_key.pem"
+          
+          # Fetch signing files with the private key (creates cert + profile)
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
-            --create
+            --create \
+            --certificate-key /tmp/cert_private_key.pem
           
           keychain add-certificates
       - name: Apply signing to Xcode project
