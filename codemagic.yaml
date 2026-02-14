@@ -25,28 +25,22 @@ workflows:
           # Generate a new RSA private key
           openssl genrsa -out /tmp/cert_private_key.pem 2048
           
-          # Revoke ALL existing iOS Distribution certificates (key mismatch fix)
-          echo "=== Revoking existing certificates ==="
-          python3 <<'REVOKE'
+          # Revoke existing iOS Distribution certificates (key mismatch fix)
+          python3 -c "
           import subprocess, json
           try:
-              r = subprocess.run(
-                  ['app-store-connect', 'certificates', 'list', '--type', 'IOS_DISTRIBUTION', '--json'],
-                  capture_output=True, text=True, timeout=30
-              )
+              r = subprocess.run(['app-store-connect', 'certificates', 'list', '--type', 'IOS_DISTRIBUTION', '--json'], capture_output=True, text=True, timeout=30)
               certs = json.loads(r.stdout) if r.stdout.strip() else []
               for c in certs:
                   cid = c.get('id', '')
                   if cid:
                       subprocess.run(['app-store-connect', 'certificates', 'delete', cid], timeout=30)
-                      print(f'Revoked certificate: {cid}')
-              if not certs:
-                  print('No existing certificates to revoke')
-          except Exception as e:
-              print(f'Certificate cleanup note: {e}')
-          REVOKE
+                      print(f'Revoked: {cid}')
+              if not certs: print('No existing certs')
+          except Exception as e: print(f'Cert cleanup: {e}')
+          " || true
           
-          # Fetch signing files (will create new cert + profile)
+          # Fetch signing files (creates new cert + profile)
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create \
@@ -54,58 +48,36 @@ workflows:
           
           keychain add-certificates
           
-          # Debug: find all profile and cert locations
-          echo "=== Profile locations ==="
-          find /Users/builder -name "*.mobileprovision" 2>/dev/null || echo "None found"
-          echo "=== Certificate locations ==="
-          find /Users/builder -name "*.p12" 2>/dev/null || echo "None found"
+          # Show where profiles are saved
+          echo "=== Profiles ==="
+          find ~/Library/MobileDevice -name "*.mobileprovision" -maxdepth 3 2>/dev/null || echo "None in MobileDevice"
+          ls -la /Users/builder/clone/*.mobileprovision 2>/dev/null || echo "None in clone"
       - name: Apply signing to Xcode project
         script: |
-          # Find mobileprovision from multiple possible locations
           python3 <<'EOF'
           import os, re, glob, subprocess
           
-          # Search multiple locations
-          search_paths = [
-              os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision'),
-              '/Users/builder/clone/*.mobileprovision',
-              '/Users/builder/**/*.mobileprovision',
-              '/tmp/*.mobileprovision',
+          # Search ONLY specific known locations (no recursive glob!)
+          locations = [
+              os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles'),
+              '/Users/builder/clone',
+              '/tmp',
           ]
           
           profiles = []
-          for pattern in search_paths:
-              found = glob.glob(pattern, recursive=True)
-              profiles.extend(found)
-          
-          # Also try find command
-          if not profiles:
-              try:
-                  result = subprocess.check_output(
-                      'find /Users/builder -name "*.mobileprovision" 2>/dev/null',
-                      shell=True
-                  ).decode().strip()
-                  if result:
-                      profiles = result.split('\n')
-              except:
-                  pass
+          for loc in locations:
+              if os.path.isdir(loc):
+                  for f in os.listdir(loc):
+                      if f.endswith('.mobileprovision'):
+                          profiles.append(os.path.join(loc, f))
           
           if not profiles:
-              print('WARNING: No mobileprovision found via search, trying Codemagic default location')
-              # Try the Codemagic CLI default profiles directory
-              cm_profiles = glob.glob(os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision'))
-              profiles = cm_profiles
-          
-          if not profiles:
-              print('ERROR: No mobileprovision found anywhere!')
-              # List all dirs to debug
-              for root, dirs, files in os.walk('/Users/builder/Library/MobileDevice'):
-                  for f in files:
-                      print(os.path.join(root, f))
+              print('ERROR: No mobileprovision found!')
+              print('Searched:', locations)
               exit(1)
           
           profile_path = profiles[0]
-          print(f'Found profile: {profile_path}')
+          print(f'Found: {profile_path}')
           
           # Extract UUID
           try:
@@ -122,44 +94,38 @@ workflows:
               name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
               profile_name = name_match.group(1) if name_match else "Unknown"
           
-          # Extract signing identity from keychain
+          # Get signing identity
           try:
-              identity = subprocess.check_output(
-                  "security find-identity -v -p codesigning | grep -i 'distribution' | head -1",
-                  shell=True
-              ).decode().strip()
-              # Extract just the name in quotes
-              import re as re2
-              id_match = re2.search(r'"([^"]+)"', identity)
-              identity = id_match.group(1) if id_match else "Apple Distribution"
+              out = subprocess.check_output(
+                  "security find-identity -v -p codesigning", shell=True
+              ).decode()
+              m = re.search(r'"([^"]*Distribution[^"]*)"', out)
+              identity = m.group(1) if m else "Apple Distribution"
           except:
               identity = "Apple Distribution"
           
-          print(f'Profile Name: {profile_name}')
-          print(f'Profile UUID: {uuid}')
+          print(f'UUID: {uuid}')
+          print(f'Name: {profile_name}')
           print(f'Identity: {identity}')
           
-          # Install profile to Xcode's expected location
-          target_dir = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles')
-          os.makedirs(target_dir, exist_ok=True)
-          target_path = os.path.join(target_dir, f'{uuid}.mobileprovision')
-          if not os.path.exists(target_path):
+          # Copy profile to Xcode location
+          xcode_dir = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles')
+          os.makedirs(xcode_dir, exist_ok=True)
+          dest = os.path.join(xcode_dir, f'{uuid}.mobileprovision')
+          if not os.path.exists(dest):
               import shutil
-              shutil.copy2(profile_path, target_path)
-              print(f'Installed profile to {target_path}')
+              shutil.copy2(profile_path, dest)
           
           # Inject into project.pbxproj
           proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
           with open(proj_path, 'r') as f:
               proj = f.read()
           
-          # Clean old signing settings
           for key in ['PROVISIONING_PROFILE =', 'PROVISIONING_PROFILE_SPECIFIER =',
                       'CODE_SIGN_IDENTITY =', '"CODE_SIGN_IDENTITY\\[sdk=iphoneos\\*\\]"',
                       'CODE_SIGN_STYLE =']:
               proj = re.sub(f'\\s*{key}[^;]*;', '', proj)
           
-          # Inject new signing settings
           new_settings = '\n'.join([
               f'\t\t\t\tPROVISIONING_PROFILE = "{uuid}";',
               f'\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "{profile_name}";',
@@ -174,7 +140,7 @@ workflows:
           with open(proj_path, 'w') as f:
               f.write(proj)
           
-          print('SUCCESS: Signing settings injected into project.pbxproj')
+          print('SUCCESS: Signing injected')
           EOF
       - name: Set versioning
         script: |
