@@ -35,84 +35,16 @@ workflows:
             --certificate-key "$(cat /tmp/cert_private_key.pem)"
           
           keychain add-certificates
-      - name: Apply signing to Xcode project
-        script: |
-          # Manually inject provisioning profile into project.pbxproj
-          python3 <<'EOF'
-          import os, re, glob, subprocess
-
-          profile_pattern = os.path.expanduser('~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision')
-          profiles = glob.glob(profile_pattern)
-          if not profiles:
-              print('ERROR: No mobileprovision found!')
-              exit(1)
-
-          profile_path = profiles[0]
-          print(f'Found profile: {profile_path}')
-
-          # Extract UUID
-          try:
-              uuid = subprocess.check_output(
-                  f"grep -aA1 'UUID' '{profile_path}' | grep -oE '[a-f0-9]{{8}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{4}}-[a-f0-9]{{12}}'",
-                  shell=True
-              ).decode().strip()
-          except:
-              uuid = "NOT_FOUND"
-
-          # Extract profile name
-          with open(profile_path, 'rb') as f:
-              content = f.read().decode('latin-1')
-              name_match = re.search(r'<key>Name</key>\s*<string>([^<]+)</string>', content)
-              profile_name = name_match.group(1) if name_match else "Unknown"
-
-          # Extract team ID
-          team_match = re.search(r'<key>TeamIdentifier</key>\s*<array>\s*<string>([^<]+)</string>', content)
-          team_id = team_match.group(1) if team_match else "ERUH5NNQUB"
-
-          # Extract signing identity
-          try:
-              identity = subprocess.check_output(
-                  "security find-identity -v -p codesigning | grep 'Apple Distribution' | head -1 | sed 's/.*\"\\(.*\\)\"/\\1/'",
-                  shell=True
-              ).decode().strip()
-          except:
-              identity = "Apple Distribution"
-
-          print(f'Profile Name: {profile_name}')
-          print(f'Profile UUID: {uuid}')
-          print(f'Team ID: {team_id}')
-          print(f'Identity: {identity}')
-
-          proj_path = 'ios/Runner.xcodeproj/project.pbxproj'
-          if not os.path.exists(proj_path):
-              print('ERROR: project.pbxproj not found!')
-              exit(1)
-
-          with open(proj_path, 'r') as f:
-              proj = f.read()
-
-          # Clean old signing settings
-          for key in ['PROVISIONING_PROFILE =', 'PROVISIONING_PROFILE_SPECIFIER =', 'CODE_SIGN_IDENTITY =',
-                      '"CODE_SIGN_IDENTITY\\[sdk=iphoneos\\*\\]"', 'CODE_SIGN_STYLE =']:
-              proj = re.sub(f'\\s*{key}[^;]*;', '', proj)
-
-          # Inject new signing settings into every buildSettings block
-          new_settings = '\n'.join([
-              f'\t\t\t\tPROVISIONING_PROFILE = "{uuid}";',
-              f'\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "{profile_name}";',
-              f'\t\t\t\tDEVELOPMENT_TEAM = {team_id};',
-              '\t\t\t\tCODE_SIGN_STYLE = Manual;',
-              f'\t\t\t\tCODE_SIGN_IDENTITY = "{identity}";',
-              f'\t\t\t\t"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "{identity}";',
-          ])
-
-          proj = proj.replace('buildSettings = {', 'buildSettings = {\n' + new_settings)
-
-          with open(proj_path, 'w') as f:
-              f.write(proj)
-
-          print('SUCCESS: Signing settings injected into project.pbxproj')
-          EOF
+          
+          # Debug: Show where profiles are saved
+          echo "=== Searching for mobileprovision files ==="
+          find /Users/builder -name "*.mobileprovision" 2>/dev/null || echo "No profiles found"
+          echo ""
+          echo "=== Searching for .p12 files ==="
+          find /Users/builder -name "*.p12" 2>/dev/null || echo "No .p12 found"
+          
+          # Apply profiles to Xcode project
+          xcode-project use-profiles --project ios/Runner.xcodeproj
       - name: Set versioning
         script: |
           LATEST_BUILD=$(app-store-connect get-latest-testflight-build-number "$BUNDLE_ID" || echo "0")
